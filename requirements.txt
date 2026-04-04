@@ -1,0 +1,7 @@
+pyrogram==2.0.106
+tgcrypto
+requests
+python-dotenv
+yfinance>=1.2.0
+pandas>=2.0.0
+pandas-ta>=0.3.14b

@@ -1,0 +1,16 @@
+[Unit]
+Description=Financial Assistant — Telegram Bridge
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /root/fin-assistant/bridge/tg_bridge.py
+WorkingDirectory=/root/fin-assistant
+Restart=always
+RestartSec=5
+Environment=HOME=/root
+StandardOutput=append:/root/fin-assistant/logs/bridge.log
+StandardError=append:/root/fin-assistant/logs/bridge.log
+
+[Install]
+WantedBy=multi-user.target

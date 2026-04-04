@@ -1,0 +1,128 @@
+"""
+Pre-open briefing (runs at 8:45 AM IST, before 9:15 market open).
+Covers: GIFT Nifty gap, India VIX, FII/DII yesterday, key events today,
+        OI snapshot baseline, and any overnight channel signals.
+"""
+import sqlite3
+import time
+import logging
+from datetime import datetime, timezone, timedelta
+
+from config import DB_PATH, IST, BOT_TOKEN, OWNER_CHAT_ID
+from nse import client as nse
+from enrichers.fii_dii import last_n_days, format_fii_dii
+from enrichers.bulk_deals import get_today, format_bulk_deals
+from enrichers.oi_velocity import snapshot as oi_snapshot
+from signals.extractor import extract, INDICES
+from bot import send
+
+log = logging.getLogger(__name__)
+
+
+def run(dry_run: bool = False) -> None:
+    now = datetime.now(IST)
+    log.info("Pre-open briefing — %s", now.strftime("%Y-%m-%d %H:%M IST"))
+
+    nse.init()
+
+    # ── Index snapshot ────────────────────────────────────────────────────
+    idx    = nse.all_indices()
+    nifty  = idx.get("NIFTY 50", {})
+    bnf    = idx.get("NIFTY BANK", {})
+    fins   = idx.get("NIFTY FIN SERVICE", {})
+    gift   = idx.get("GIFT NIFTY", {})
+    vix_v  = nse.india_vix()
+
+    # Take OI baseline snapshot for today's velocity tracking
+    try:
+        oi_snapshot()
+    except Exception as e:
+        log.warning("OI snapshot failed: %s", e)
+
+    # ── FII/DII last 5 days ───────────────────────────────────────────────
+    fii_history = last_n_days(5)
+    fii_today   = fii_history[0] if fii_history else None
+
+    # ── Overnight signals from DB ─────────────────────────────────────────
+    conn = sqlite3.connect(DB_PATH)
+    rows = conn.execute("""
+        SELECT c.name, m.content, m.timestamp
+        FROM messages m JOIN chats c ON m.chat_jid = c.jid
+        WHERE m.chat_jid != 'tg:476254580'
+          AND m.timestamp >= datetime('now', '-12 hours')
+        ORDER BY m.timestamp DESC
+    """).fetchall()
+    conn.close()
+
+    overnight_sigs = []
+    seen = set()
+    for name, text, ts in rows:
+        sig = extract(text)
+        if sig:
+            key = (sig["instrument"], sig["direction"])
+            if key not in seen:
+                seen.add(key)
+                sig.update({"channel": name, "ts": ts})
+                overnight_sigs.append(sig)
+
+    # ── Format ────────────────────────────────────────────────────────────
+    L = []
+    L.append("🌅 <b>PRE-OPEN BRIEFING</b>")
+    L.append(f"📅 {now.strftime('%a %d %b %Y  %H:%M IST')}")
+    L.append(f"⏰ Market opens in ~{max(0, (now.replace(hour=9,minute=15,second=0)-now).seconds//60)} min")
+    L.append("")
+
+    # GIFT Nifty (SGX gap indicator)
+    if gift and gift.get("last"):
+        prev_close = nifty.get("previousClose") or nifty.get("last", 0)
+        gap        = (gift["last"] - prev_close) if prev_close else 0
+        gap_pct    = gap / prev_close * 100 if prev_close else 0
+        gap_em     = "🟢" if gap > 0 else ("🔴" if gap < 0 else "⚪")
+        L.append(f"{gap_em} <b>GIFT NIFTY</b>  {gift['last']:,.0f}  "
+                 f"Gap {'+'if gap>=0 else ''}{gap:.0f} pts ({gap_pct:+.2f}%)")
+    else:
+        L.append("⚪ GIFT NIFTY — data unavailable (pre-market or holiday)")
+
+    # VIX
+    if vix_v:
+        vix_em = "😱" if vix_v > 20 else ("😬" if vix_v > 15 else "😌")
+        L.append(f"{vix_em} <b>India VIX</b>  {vix_v:.2f}  "
+                 f"({'HIGH — expect volatility' if vix_v > 20 else 'ELEVATED' if vix_v > 15 else 'NORMAL'})")
+
+    # Previous close
+    def idx_prev(label, d):
+        if not d or not d.get("last"): return
+        pct = d.get("percentChange", 0) or 0
+        em  = "🟢" if pct >= 0 else "🔴"
+        L.append(f"{em} <b>{label}</b>  {d['last']:,.0f}  ({pct:+.2f}%)  "
+                 f"52W H {d.get('yearHigh','?')}  L {d.get('yearLow','?')}")
+
+    L.append("")
+    L.append("📊 <b>Previous close</b>")
+    idx_prev("NIFTY 50   ", nifty)
+    idx_prev("BANK NIFTY ", bnf)
+    idx_prev("FIN SERVICE", fins)
+
+    # FII/DII
+    L.append("")
+    L.append(format_fii_dii(fii_today, fii_history))
+
+    # Overnight signals
+    if overnight_sigs:
+        L.append("")
+        L.append(f"🌙 <b>OVERNIGHT SIGNALS  ({len(overnight_sigs)})</b>")
+        for s in overnight_sigs[:10]:
+            em = "🟢" if s["direction"] == "BUY" else ("🔴" if s["direction"] == "SELL" else "⚪")
+            parts = [f"{em} <b>{s['instrument']}</b>"]
+            if s.get("entry"):   parts.append(f"@ {s['entry']}")
+            if s.get("sl"):      parts.append(f"SL {s['sl']}")
+            if s.get("targets"): parts.append("TGT " + "/".join(str(t) for t in s["targets"]))
+            parts.append(f"[{s['channel']}]")
+            L.append("  " + "  ".join(parts))
+
+    L.append("")
+    L.append("━━━━━━━━━━━━━━━━━━━")
+    L.append("📡 Bridge live  •  Hourly scans start at 9:45 AM  •  EOD at 3:45 PM")
+
+    send("\n".join(L), dry_run=dry_run)
+    log.info("Pre-open briefing sent")
