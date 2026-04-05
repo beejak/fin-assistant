@@ -25,6 +25,17 @@ REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 HEARTBEAT_DIR="${REPO_DIR}/logs/heartbeats"
 mkdir -p "${HEARTBEAT_DIR}"
 
+# -- Exclusive lock: prevents two instances of the same job running concurrently --
+# Uses flock on a per-job lock file. If the lock is already held (another instance
+# is mid-run or mid-retry), this instance exits immediately with a log message.
+# The lock is released automatically when the script exits (fd 9 is closed by OS).
+LOCK_FILE="${HEARTBEAT_DIR}/${JOB}.lock"
+exec 9>"${LOCK_FILE}"
+if ! flock -n 9; then
+    echo "[cron_guard] job=${JOB} already running (lock held) -- skipping duplicate"
+    exit 0
+fi
+
 # -- Load bot credentials from .env --
 if [[ -f "${REPO_DIR}/.env" ]]; then
     set -a

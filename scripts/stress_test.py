@@ -698,54 +698,62 @@ def test_F7():
     return "UTC/IST dates align during market hours (no mismatch in practice)"
 
 def test_F8():
-    """Race condition: two cron_guard instances for same job both run it (no flock).
+    """flock prevents two cron_guard instances running the same job concurrently.
 
-    This is a known architectural limitation — documented, not a crash.
-    Both processes should: exit 0, write heartbeat (last write wins), run job twice.
+    Two instances are launched simultaneously. The first acquires the lock and
+    runs the job; the second sees the lock held and exits immediately (runs=1).
+    Previously this was a known race; flock now makes it a hard guarantee.
     """
     job = "test_cg_race"
     cleanup_heartbeat(job)
+    # Also remove any stale lock from a prior run
+    lock = ROOT / "logs" / "heartbeats" / f"{job}.lock"
+    lock.unlink(missing_ok=True)
 
     counter = Path(tempfile.mktemp(suffix=".txt"))
     counter.write_text("0")
+    # Job sleeps briefly so the second instance definitely arrives while first holds lock
     script = Path(tempfile.mktemp(suffix=".sh"))
     script.write_text(
         f"#!/bin/sh\n"
         f"n=$(cat {counter} 2>/dev/null || echo 0)\n"
         f"echo $((n+1)) > {counter}\n"
-        f"sleep 0.2\n"
+        f"sleep 0.5\n"
         f"exit 0\n"
     )
     script.chmod(0o755)
 
-    tmpdir = Path(tempfile.mkdtemp())
-    bin_dir = fake_sleep_bin(tmpdir)
+    # No fake_sleep_bin here: the job succeeds on first try so cron_guard's
+    # 60s RETRY_WAIT is never reached. We need real sleep to keep the first
+    # instance holding the flock while the second arrives.
     env = os.environ.copy()
-    env["PATH"] = bin_dir + ":" + env["PATH"]
     env["BOT_TOKEN"] = ""
     env["OWNER_CHAT_ID"] = ""
 
     procs = [
         subprocess.Popen(
             ["bash", str(ROOT / "scripts" / "cron_guard.sh"), job, str(script)],
-            env=env, cwd=str(ROOT), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            env=env, cwd=str(ROOT), stdout=subprocess.PIPE, stderr=subprocess.PIPE
         )
         for _ in range(2)
     ]
-    for p in procs:
-        p.wait(timeout=30)
+    outputs = [p.communicate(timeout=30) for p in procs]
 
     runs = int(counter.read_text().strip()) if counter.exists() else 0
     hb = ROOT / "logs" / "heartbeats" / f"{job}.last_ok"
+    hb_exists = hb.exists()
+    skipped = any(b"already running" in (o[0] or b"") + (o[1] or b"") for o in outputs)
 
+    # Cleanup after reading all state
     counter.unlink(missing_ok=True)
     script.unlink(missing_ok=True)
-    shutil.rmtree(tmpdir, ignore_errors=True)
+    lock.unlink(missing_ok=True)
     cleanup_heartbeat(job)
 
-    # Document the race: both ran (count may be 1 or 2 depending on timing)
-    assert hb.exists() or runs >= 1, "At least one run must have succeeded"
-    return f"[KNOWN RACE] Job ran {runs}× by 2 concurrent cron_guard instances — heartbeat is safe (last write wins)"
+    assert runs == 1, f"flock must prevent double-run: job ran {runs}× (expected 1)"
+    assert hb_exists, "Heartbeat must be written by the instance that ran"
+    assert skipped, "Second instance must log 'already running' and skip"
+    return "flock correctly serialises concurrent instances — job ran exactly once"
 
 for tid, lbl, fn in [
     ("F1", "scheduler run_job: TimeoutExpired → False + alert", test_F1),
@@ -755,7 +763,7 @@ for tid, lbl, fn in [
     ("F5", "ran_today: 10-char date-only heartbeat matches correctly", test_F5),
     ("F6", "ran_today: partial 5-char date does NOT match → False", test_F6),
     ("F7", "UTC/IST date alignment: no mismatch during market hours", test_F7),
-    ("F8", "cron_guard: race condition with 2 parallel instances [KNOWN]", test_F8),
+    ("F8", "cron_guard: flock prevents duplicate run on 2 parallel instances", test_F8),
 ]:
     run_test(tid, lbl, fn)
 
