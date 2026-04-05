@@ -21,11 +21,15 @@ from signals import confluence as conf_mod
 from signals import ta as ta_mod
 from enrichers import oi_velocity as oi_mod
 from enrichers import events as events_mod
+from learning import channel_scores as ch_scores
+from learning import instrument_stats as instr_stats
+from learning import market_regime as regime_mod
+from enrichers.macro_calendar import get_upcoming, format_macro_events
 from bot import send
 
 log = logging.getLogger(__name__)
 
-# ── DB helpers ────────────────────────────────────────────────────────────────
+# -- DB helpers ---------------------------------------------------------------
 
 def db_init():
     with sqlite3.connect(DB_PATH) as c:
@@ -62,26 +66,25 @@ def log_signal(sig, date_str):
               sig.get("text", "")[:500], datetime.now(IST).isoformat()))
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+# -- Main ---------------------------------------------------------------------
 
 def run(dry_run: bool = False) -> None:
     now      = datetime.now(IST)
     date_str = now.strftime("%Y-%m-%d")
     db_init()
 
-    # ── 1. Read new messages ──────────────────────────────────────────────
-    conn = sqlite3.connect(DB_PATH)
-    rows = conn.execute("""
-        SELECT c.name, m.content, m.timestamp
-        FROM messages m JOIN chats c ON m.chat_jid = c.jid
-        WHERE m.chat_jid != 'tg:476254580'
-          AND m.timestamp >= datetime('now', '-65 minutes')
-        ORDER BY m.timestamp DESC
-    """).fetchall()
-    conn.close()
+    # -- 1. Read new messages -------------------------------------------------
+    with sqlite3.connect(DB_PATH) as conn:
+        rows = conn.execute("""
+            SELECT c.name, m.content, m.timestamp
+            FROM messages m JOIN chats c ON m.chat_jid = c.jid
+            WHERE m.chat_jid != 'tg:476254580'
+              AND m.timestamp >= datetime('now', '-65 minutes')
+            ORDER BY m.timestamp DESC
+        """).fetchall()
     log.info("Hourly: %d messages", len(rows))
 
-    # ── 2. Extract & deduplicate ──────────────────────────────────────────
+    # -- 2. Extract & deduplicate ---------------------------------------------
     new_sigs   = []
     by_channel = defaultdict(list)
     for name, text, ts in rows:
@@ -94,10 +97,10 @@ def run(dry_run: bool = False) -> None:
 
     log.info("%d new signals", len(new_sigs))
     if not new_sigs:
-        log.info("Nothing new — skipping send")
+        log.info("Nothing new -- skipping send")
         return
 
-    # ── 3. NSE data ───────────────────────────────────────────────────────
+    # -- 3. NSE data ----------------------------------------------------------
     nse.init()
     idx   = nse.all_indices()
     nifty = idx.get("NIFTY 50", {})
@@ -143,26 +146,51 @@ def run(dry_run: bool = False) -> None:
     all_stock_syms = list(stock_syms)
     events_map = events_mod.get_events_for(all_stock_syms, days_ahead=5) if all_stock_syms else {}
 
-    # ── 4. Format ─────────────────────────────────────────────────────────
+    # -- 4. Macro events due today --------------------------------------------
+    macro_today = get_upcoming(days_ahead=1)
+
+    # -- 5. Load learning context ---------------------------------------------
+    scores = ch_scores.get_all()
+    regime = regime_mod.get_latest()
+
+    # Sort channels: HIGH-confidence first, LOW last
+    conf_order = {"HIGH": 0, "MED": 1, "UNKNOWN": 2, "LOW": 3}
+    by_channel = dict(sorted(
+        by_channel.items(),
+        key=lambda x: (conf_order.get((scores.get(x[0]) or {}).get("confidence", "UNKNOWN"), 2), -len(x[1]))
+    ))
+
+    # -- 6. Format ------------------------------------------------------------
     L = []
-    L.append(f"📡 <b>SIGNAL SCAN  {now.strftime('%H:%M IST')}</b>  ({len(new_sigs)} new)")
+    L.append(f"[LIVE] <b>SIGNAL SCAN  {now.strftime('%H:%M IST')}</b>  ({len(new_sigs)} new)")
 
     # Compact index bar
     def idx_bar(label, d, oc=None):
         if not d or not d.get("last"): return
         pct = d.get("percentChange", 0) or 0
-        em  = "🟢" if pct >= 0 else "🔴"
+        em  = "[+]" if pct >= 0 else "[-]"
         line = f"{em} <b>{label}</b> {d['last']:,.0f} ({pct:+.2f}%)"
         if oc:
-            bias_em = {"BULLISH": "🐂", "BEARISH": "🐻", "NEUTRAL": "⚖️"}.get(oc["bias"], "")
-            line += f"  PCR {oc['pcr']}{bias_em}  R⛔{oc['max_ce']}  S🛡{oc['max_pe']}"
+            bias_em = {"BULLISH": "BULL", "BEARISH": "BEAR", "NEUTRAL": "NEU"}.get(oc["bias"], "")
+            line += f"  PCR {oc['pcr']}{bias_em}  R:{oc['max_ce']}  S:{oc['max_pe']}"
         L.append(line)
 
     idx_bar("NIFTY", nifty, oc_n)
     idx_bar("BANKNIFTY", bnf, oc_b)
     if vix:
-        vem = "😱" if vix > 20 else ("😬" if vix > 15 else "😌")
+        vem = "[!!!]" if vix > 20 else ("[!!]" if vix > 15 else "[.]")
         L.append(f"{vem} VIX {vix:.2f}")
+
+    # Market regime context (from yesterday's EOD snapshot)
+    regime_line = regime_mod.format_regime_line(regime)
+    if regime_line:
+        L.append(regime_line)
+
+    # Macro events firing today
+    macro_text = format_macro_events(macro_today)
+    if macro_text:
+        L.append(macro_text)
+
     L.append("")
 
     # Confluence alert (fire first if present)
@@ -176,13 +204,17 @@ def run(dry_run: bool = False) -> None:
         L.append(oi_text)
         L.append("")
 
-    # Signals by channel
-    for channel, sigs in sorted(by_channel.items(), key=lambda x: -len(x[1])):
-        L.append(f"<b>📢 {channel}</b>  ({len(sigs)})")
+    # Signals by channel (sorted by confidence: HIGH -> MED -> UNKNOWN -> LOW)
+    for channel, sigs in by_channel.items():
+        score_badge = ch_scores.format_score_badge(channel, scores)
+        ch_header = f"<b>>> {channel}</b>  ({len(sigs)})"
+        if score_badge:
+            ch_header += f"  <i>{score_badge}</i>"
+        L.append(ch_header)
         for s in sigs:
             ts_ist = (datetime.fromisoformat(s["ts"])
                       .replace(tzinfo=timezone.utc).astimezone(IST))
-            em = "🟢" if s["direction"] == "BUY" else ("🔴" if s["direction"] == "SELL" else "⚪")
+            em = "[+]" if s["direction"] == "BUY" else ("[-]" if s["direction"] == "SELL" else "[=]")
 
             parts = [f"{em} <b>{s['instrument']}</b>"]
             if s.get("entry"):   parts.append(f"@ {s['entry']}")
@@ -197,20 +229,20 @@ def run(dry_run: bool = False) -> None:
             if sym in quotes:
                 q   = quotes[sym]
                 pct = q.get("pct") or 0
-                arr = "▲" if pct >= 0 else "▼"
-                nline = f"  └ NSE ₹{q['ltp']}  {arr}{abs(pct):.1f}%"
+                arr = "^" if pct >= 0 else "v"
+                nline = f"  └ NSE Rs.{q['ltp']}  {arr}{abs(pct):.1f}%"
                 if s.get("entry") and q.get("ltp"):
                     diff = (q["ltp"] - s["entry"]) / s["entry"] * 100
                     if abs(diff) > 3:
-                        nline += f"  ⚠️ entry {s['entry']} ({abs(diff):.0f}% away)"
+                        nline += f"  [WARN] entry {s['entry']} ({abs(diff):.0f}% away)"
                     elif s["direction"] == "BUY" and q["ltp"] >= s["entry"]:
-                        nline += "  ✅"
+                        nline += "  [OK]"
                     elif s["direction"] == "SELL" and q["ltp"] <= s["entry"]:
-                        nline += "  ✅"
+                        nline += "  [OK]"
                 if s.get("sl") and q.get("ltp"):
                     if (s["direction"] == "BUY" and q["ltp"] < s["sl"]) or \
                        (s["direction"] == "SELL" and q["ltp"] > s["sl"]):
-                        nline += "  🚨 SL HIT"
+                        nline += "  [ALERT] SL HIT"
                 L.append(nline)
             elif sym == "NIFTY" and nifty.get("last"):
                 L.append(f"  └ NIFTY {nifty['last']:,.0f}  ({nifty.get('percentChange',0):+.2f}%)")
@@ -222,6 +254,11 @@ def run(dry_run: bool = False) -> None:
                 ta_line = ta_mod.format_ta(ta_cache[sym])
                 if ta_line:
                     L.append(f"  └ TA: {ta_line}")
+
+            # Historical hit rate for this instrument + direction
+            stat_line = instr_stats.format_stat_line(s["instrument"], s["direction"])
+            if stat_line:
+                L.append(f"  └ {stat_line}")
 
             # Corporate event warning
             if sym in events_map:

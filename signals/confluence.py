@@ -12,7 +12,7 @@ log = logging.getLogger(__name__)
 
 def get_confluences(date_str: str, min_channels: int = 2) -> list[dict]:
     """
-    Return signals where ≥ min_channels channels independently agree.
+    Return signals where >= min_channels channels independently agree.
     Returns list of {instrument, direction, count, channels, entries, sls, targets}.
     """
     with sqlite3.connect(DB_PATH) as conn:
@@ -55,10 +55,10 @@ def get_confluences(date_str: str, min_channels: int = 2) -> list[dict]:
 def format_confluence_alert(confluences: list[dict]) -> str | None:
     if not confluences:
         return None
-    lines = ["🔥 <b>CONFLUENCE ALERT</b> — Multiple channels agree\n"]
+    lines = ["[!!] <b>CONFLUENCE ALERT</b> -- Multiple channels agree\n"]
     for c in confluences:
-        em = "🟢" if c["direction"] == "BUY" else "🔴"
-        line = f"{em} <b>{c['instrument']}</b>  {c['direction']}  × {c['count']} channels"
+        em = "[+]" if c["direction"] == "BUY" else "[-]"
+        line = f"{em} <b>{c['instrument']}</b>  {c['direction']}  x {c['count']} channels"
         if c["avg_entry"]: line += f"  avg entry {c['avg_entry']}"
         if c["avg_sl"]:    line += f"  avg SL {c['avg_sl']}"
         lines.append(line)

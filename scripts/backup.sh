@@ -1,44 +1,136 @@
 #!/usr/bin/env bash
-# Backup script — creates a portable archive of everything needed to restore
-# Usage: ./scripts/backup.sh [output_dir]
-# Restore: tar -xzf fin-assistant-backup-YYYYMMDD.tar.gz
-
+# =============================================================================
+# Financial Assistant -- backup script
+#
+# Usage:
+#   ./scripts/backup.sh                  # backs up to ~/fa-backups/
+#   ./scripts/backup.sh /path/to/dir     # custom local output dir
+#
+# What is backed up:
+#   - store/messages.db    (all messages, signals, learning data)
+#   - .env                 (credentials -- keep this safe)
+#   - ~/tg_session.session (Pyrogram session file)
+#
+# Source code is NOT backed up here -- it lives on GitHub.
+#
+# Google Drive upload:
+#   Requires rclone configured with a remote named "gdrive".
+#   Run: rclone config  (one-time setup -- see README)
+#   If rclone/gdrive not configured, local backup only.
+#
+# Retention:
+#   Local:  keeps last 7 backups (older deleted automatically)
+#   Remote: keeps last 30 backups on Google Drive
+# =============================================================================
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-OUT_DIR="${1:-$HOME}"
+OUT_DIR="${1:-$HOME/fa-backups}"
 STAMP="$(date +%Y%m%d_%H%M)"
-ARCHIVE="$OUT_DIR/fin-assistant-backup-$STAMP.tar.gz"
+ARCHIVE_NAME="fa-backup-${STAMP}.tar.gz"
+ARCHIVE="${OUT_DIR}/${ARCHIVE_NAME}"
 
-echo "Backing up to $ARCHIVE ..."
+GDRIVE_REMOTE="gdrive"          # rclone remote name
+GDRIVE_FOLDER="fin-assistant-backups"
+LOCAL_KEEP=7
+REMOTE_KEEP=30
 
-# Stop bridge temporarily for clean DB snapshot
-BRIDGE_RUNNING=false
+log() { echo "[$(date '+%H:%M:%S')] $*"; }
+
+mkdir -p "${OUT_DIR}"
+
+# -- Pause bridge for a clean DB snapshot -------------------------------------
+BRIDGE_WAS_RUNNING=false
 if systemctl is-active --quiet fin-bridge 2>/dev/null; then
+    log "Pausing fin-bridge for clean snapshot..."
     systemctl stop fin-bridge
-    BRIDGE_RUNNING=true
+    BRIDGE_WAS_RUNNING=true
 fi
 
-tar -czf "$ARCHIVE" \
-    --exclude="$REPO_DIR/__pycache__" \
-    --exclude="$REPO_DIR/**/__pycache__" \
-    --exclude="$REPO_DIR/logs" \
-    --exclude="$REPO_DIR/.venv" \
-    -C "$(dirname "$REPO_DIR")" \
-    "$(basename "$REPO_DIR")" \
-    -C "$HOME" \
-    "$(basename "$(ls "$HOME"/*.session 2>/dev/null | head -1)" 2>/dev/null || true)" \
-    2>/dev/null || true
+# -- Create archive -----------------------------------------------------------
+log "Creating archive: ${ARCHIVE}"
 
-# Restart bridge
-if $BRIDGE_RUNNING; then
+FILES_TO_BACKUP=()
+
+# Database
+DB="${REPO_DIR}/store/messages.db"
+[[ -f "${DB}" ]] && FILES_TO_BACKUP+=("${DB}")
+
+# .env (credentials)
+ENV="${REPO_DIR}/.env"
+[[ -f "${ENV}" ]] && FILES_TO_BACKUP+=("${ENV}")
+
+# Pyrogram session file (try common locations)
+for SESSION_GLOB in "${HOME}"/*.session "${REPO_DIR}"/*.session; do
+    for F in ${SESSION_GLOB}; do
+        [[ -f "${F}" ]] && FILES_TO_BACKUP+=("${F}")
+    done
+done
+
+if [[ ${#FILES_TO_BACKUP[@]} -eq 0 ]]; then
+    log "Nothing to back up (no DB or session files found)"
+    exit 0
+fi
+
+tar -czf "${ARCHIVE}" "${FILES_TO_BACKUP[@]}" 2>/dev/null
+SIZE=$(du -sh "${ARCHIVE}" | cut -f1)
+log "Archive created: ${ARCHIVE_NAME} (${SIZE})"
+
+# -- Resume bridge ------------------------------------------------------------
+if ${BRIDGE_WAS_RUNNING}; then
     systemctl start fin-bridge
+    log "fin-bridge resumed"
 fi
 
-SIZE=$(du -sh "$ARCHIVE" | cut -f1)
-echo "Backup complete: $ARCHIVE ($SIZE)"
-echo ""
-echo "To restore on a new machine:"
-echo "  1. tar -xzf $(basename "$ARCHIVE") -C ~"
-echo "  2. cd fin-assistant && ./scripts/setup.sh"
-echo "  3. Restore .env manually (not included — keep separately)"
+# -- Local retention: keep last N backups -------------------------------------
+BACKUP_COUNT=$(find "${OUT_DIR}" -name "fa-backup-*.tar.gz" | wc -l)
+if [[ ${BACKUP_COUNT} -gt ${LOCAL_KEEP} ]]; then
+    TO_DELETE=$(( BACKUP_COUNT - LOCAL_KEEP ))
+    log "Pruning ${TO_DELETE} old local backup(s) (keeping ${LOCAL_KEEP})"
+    find "${OUT_DIR}" -name "fa-backup-*.tar.gz" \
+        | sort | head -"${TO_DELETE}" | xargs rm -f
+fi
+
+# -- Google Drive upload ------------------------------------------------------
+if ! command -v rclone &>/dev/null; then
+    log "rclone not installed -- local backup only"
+    log "To enable Google Drive: run scripts/setup-gdrive.sh"
+elif ! rclone listremotes 2>/dev/null | grep -q "^${GDRIVE_REMOTE}:"; then
+    log "rclone remote '${GDRIVE_REMOTE}' not configured -- local backup only"
+    log "To configure: rclone config  (create a remote named '${GDRIVE_REMOTE}')"
+else
+    log "Uploading to Google Drive: ${GDRIVE_REMOTE}:${GDRIVE_FOLDER}/"
+    rclone copy "${ARCHIVE}" "${GDRIVE_REMOTE}:${GDRIVE_FOLDER}/" \
+        --stats-one-line --quiet 2>/dev/null \
+        && log "Upload complete" \
+        || log "Upload failed -- local backup preserved at ${ARCHIVE}"
+
+    # Remote retention
+    REMOTE_FILES=$(rclone lsf "${GDRIVE_REMOTE}:${GDRIVE_FOLDER}/" \
+        --files-only 2>/dev/null | sort || true)
+    REMOTE_COUNT=$(echo "${REMOTE_FILES}" | grep -c "fa-backup-" 2>/dev/null || echo 0)
+    if [[ ${REMOTE_COUNT} -gt ${REMOTE_KEEP} ]]; then
+        TO_DELETE=$(( REMOTE_COUNT - REMOTE_KEEP ))
+        log "Pruning ${TO_DELETE} old remote backup(s) (keeping ${REMOTE_KEEP})"
+        echo "${REMOTE_FILES}" | grep "fa-backup-" | head -"${TO_DELETE}" | while read -r OLD; do
+            rclone delete "${GDRIVE_REMOTE}:${GDRIVE_FOLDER}/${OLD}" --quiet 2>/dev/null || true
+        done
+    fi
+fi
+
+# -- Summary ------------------------------------------------------------------
+echo
+log "---"
+log "Backup complete"
+log "  Archive : ${ARCHIVE} (${SIZE})"
+log "  Local   : $(find "${OUT_DIR}" -name "fa-backup-*.tar.gz" | wc -l) backup(s) in ${OUT_DIR}"
+if command -v rclone &>/dev/null && rclone listremotes 2>/dev/null | grep -q "^${GDRIVE_REMOTE}:"; then
+    REMOTE_COUNT=$(rclone lsf "${GDRIVE_REMOTE}:${GDRIVE_FOLDER}/" --files-only 2>/dev/null \
+        | grep -c "fa-backup-" 2>/dev/null || echo 0)
+    log "  Remote  : ${REMOTE_COUNT} backup(s) on Google Drive"
+fi
+log "---"
+echo
+log "Restore instructions:"
+log "  tar -xzf ${ARCHIVE_NAME}  (extracts DB, .env, session to their original paths)"
+log "  Then run: ./scripts/setup.sh  and  systemctl start fin-bridge"

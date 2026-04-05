@@ -13,6 +13,9 @@ from config import DB_PATH, IST
 from nse import client as nse
 from enrichers.fii_dii import store_today as store_fii, last_n_days, format_fii_dii
 from enrichers.bulk_deals import store_today as store_bulk, get_today, format_bulk_deals
+from learning import channel_scores as ch_scores
+from learning import instrument_stats as instr_stats
+from learning import market_regime as regime_mod
 from bot import send
 
 log = logging.getLogger(__name__)
@@ -36,7 +39,7 @@ def grade_signal(sig: dict, q: dict | None) -> tuple[str, str]:
 
     if direct == "BUY":
         if sl and low <= sl:
-            return "SL_HIT", f"day low {low} ≤ SL {sl}"
+            return "SL_HIT", f"day low {low} <= SL {sl}"
         hits = [t for t in tgts if t and high >= t]
         if hits:
             return f"TGT{len(hits)}_HIT", f"day high {high} reached TGT {hits[-1]}"
@@ -45,7 +48,7 @@ def grade_signal(sig: dict, q: dict | None) -> tuple[str, str]:
 
     elif direct == "SELL":
         if sl and high >= sl:
-            return "SL_HIT", f"day high {high} ≥ SL {sl}"
+            return "SL_HIT", f"day high {high} >= SL {sl}"
         hits = [t for t in tgts if t and low <= t]
         if hits:
             return f"TGT{len(hits)}_HIT", f"day low {low} hit TGT {hits[-1]}"
@@ -58,9 +61,9 @@ def grade_signal(sig: dict, q: dict | None) -> tuple[str, str]:
 def run(dry_run: bool = False) -> None:
     now      = datetime.now(IST)
     date_str = now.strftime("%Y-%m-%d")
-    log.info("EOD grader — %s", date_str)
+    log.info("EOD grader -- %s", date_str)
 
-    # ── Fetch supplementary data ──────────────────────────────────────────
+    # -- Fetch supplementary data ---------------------------------------------
     nse.init()
     try:
         store_fii()
@@ -71,7 +74,7 @@ def run(dry_run: bool = False) -> None:
     except Exception as e:
         log.warning("Bulk deals store: %s", e)
 
-    # ── Load today's open signals ─────────────────────────────────────────
+    # -- Load today's open signals --------------------------------------------
     with sqlite3.connect(DB_PATH) as conn:
         rows = conn.execute(
             "SELECT * FROM signal_log WHERE date=? AND result='OPEN'", (date_str,)
@@ -79,7 +82,7 @@ def run(dry_run: bool = False) -> None:
 
     if not rows:
         log.info("No open signals to grade")
-        send(f"📊 <b>EOD {date_str}</b>\nNo signals logged today.", dry_run=dry_run)
+        send(f"[DATA] <b>EOD {date_str}</b>\nNo signals logged today.", dry_run=dry_run)
         return
 
     sigs = [dict(zip(COLS, r)) for r in rows]
@@ -104,7 +107,7 @@ def run(dry_run: bool = False) -> None:
         if q and q.get("ltp"):
             quotes[sym] = q
 
-    # ── Grade each signal ─────────────────────────────────────────────────
+    # -- Grade each signal ----------------------------------------------------
     graded = []
     with sqlite3.connect(DB_PATH) as conn:
         for s in sigs:
@@ -123,14 +126,14 @@ def run(dry_run: bool = False) -> None:
             graded.append({"sig": s, "result": result, "note": note, "q": q})
         conn.commit()
 
-    # ── Format EOD report ─────────────────────────────────────────────────
+    # -- Format EOD report ----------------------------------------------------
     hits  = sum(1 for g in graded if "TGT" in g["result"])
     sls   = sum(1 for g in graded if g["result"] == "SL_HIT")
     opens = sum(1 for g in graded if g["result"] == "OPEN")
 
     L = []
-    L.append(f"📊 <b>EOD REPORT — {date_str}</b>")
-    L.append(f"✅ {hits} TGT hit  🚨 {sls} SL hit  ⏳ {opens} open  (of {len(graded)} calls)")
+    L.append(f"[DATA] <b>EOD REPORT -- {date_str}</b>")
+    L.append(f"[OK] {hits} TGT hit  [ALERT] {sls} SL hit  [OPEN] {opens} open  (of {len(graded)} calls)")
     L.append("")
 
     # Sort: TGT hits first, then open, then SL hits
@@ -142,12 +145,12 @@ def run(dry_run: bool = False) -> None:
         by_ch[g["sig"]["channel"]].append(g)
 
     for channel, items in sorted(by_ch.items()):
-        L.append(f"<b>── {channel} ──</b>")
+        L.append(f"<b>-- {channel} --</b>")
         for g in items:
             s   = g["sig"]
             res = g["result"]
-            em  = "✅" if "TGT" in res else ("🚨" if res == "SL_HIT" else "⏳")
-            dem = "🟢" if s["direction"] == "BUY" else ("🔴" if s["direction"] == "SELL" else "⚪")
+            em  = "[OK]" if "TGT" in res else ("[ALERT]" if res == "SL_HIT" else "[OPEN]")
+            dem = "[+]" if s["direction"] == "BUY" else ("[-]" if s["direction"] == "SELL" else "[=]")
             tgts = json.loads(s["targets"] or "[]")
             line = f"  {em} {dem} <b>{s['instrument']}</b>"
             if s["entry"]:  line += f" @ {s['entry']}"
@@ -159,15 +162,15 @@ def run(dry_run: bool = False) -> None:
         L.append("")
 
     # Channel scorecard
-    L.append("━━━━━━━━━━━━━━━━━━━")
-    L.append("<b>📈 CHANNEL SCORECARD</b>")
+    L.append("-------------------")
+    L.append("<b>[UP] CHANNEL SCORECARD</b>")
     for channel, items in sorted(by_ch.items()):
         h = sum(1 for g in items if "TGT" in g["result"])
         s = sum(1 for g in items if g["result"] == "SL_HIT")
         o = sum(1 for g in items if g["result"] == "OPEN")
         t = len(items)
         pct = round(h / t * 100) if t else 0
-        bar = "▓" * h + "░" * s + "·" * o
+        bar = "#" * h + "." * s + "." * o
         L.append(f"  {channel[:28]:<28}  {h}/{t} ({pct}%)  [{bar}]")
 
     # FII/DII
@@ -180,6 +183,19 @@ def run(dry_run: bool = False) -> None:
     if deals:
         L.append("")
         L.append(format_bulk_deals(deals))
+
+    # -- Learning loop: update scores and regime AFTER grading ---------------
+    try:
+        ch_scores.update()
+        instr_stats.update()
+        # Regime snapshot: use today's VIX and Nifty close from already-fetched data
+        vix_val    = nse.india_vix()
+        nifty_data = nse.all_indices()
+        nifty_close = (nifty_data.get("NIFTY 50") or {}).get("last")
+        regime_mod.snapshot(vix=vix_val, nifty_close=nifty_close)
+        log.info("Learning loop updated: channel scores, instrument stats, market regime")
+    except Exception as e:
+        log.warning("Learning loop update failed: %s", e)
 
     send("\n".join(L), dry_run=dry_run)
     log.info("EOD report sent")

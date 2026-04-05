@@ -1,0 +1,19 @@
+[Unit]
+Description=Financial Assistant Failsafe Scheduler (Layer 4)
+Documentation=file:/root/fin-assistant/scripts/scheduler.py
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/fin-assistant
+ExecStart=/usr/bin/python3 scripts/scheduler.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=fin-scheduler
+
+[Install]
+WantedBy=multi-user.target

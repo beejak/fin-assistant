@@ -108,3 +108,43 @@ CREATE TABLE IF NOT EXISTS corporate_events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_corp_date ON corporate_events(ex_date);
+
+-- ── Learning loop ──────────────────────────────────────────────────────────
+
+-- Rolling 30-day hit rate per channel (updated each EOD)
+CREATE TABLE IF NOT EXISTS channel_scores (
+    channel      TEXT PRIMARY KEY,
+    total        INTEGER DEFAULT 0,
+    hits         INTEGER DEFAULT 0,
+    sl_hits      INTEGER DEFAULT 0,
+    hit_rate     REAL,
+    confidence   TEXT DEFAULT 'UNKNOWN',  -- HIGH | MED | LOW | UNKNOWN
+    suggest_mute INTEGER DEFAULT 0,
+    updated_at   TEXT
+);
+
+-- Per-instrument, per-direction success rate (updated each EOD)
+CREATE TABLE IF NOT EXISTS instrument_stats (
+    instrument   TEXT NOT NULL,
+    direction    TEXT NOT NULL,
+    total        INTEGER DEFAULT 0,
+    hits         INTEGER DEFAULT 0,
+    sl_hits      INTEGER DEFAULT 0,
+    hit_rate     REAL,
+    updated_at   TEXT,
+    PRIMARY KEY (instrument, direction)
+);
+
+-- Daily market regime snapshot (VIX quartile, FII flow, index trend)
+CREATE TABLE IF NOT EXISTS market_regime (
+    date         TEXT PRIMARY KEY,
+    vix          REAL,
+    vix_label    TEXT,                    -- HIGH | NORMAL
+    fii_net_5d   REAL,
+    flow_label   TEXT,                    -- FII_BUYING | FII_SELLING | NEUTRAL
+    nifty_close  REAL,
+    nifty_5d_pct REAL,
+    trend_label  TEXT,                    -- BULLISH | BEARISH | SIDEWAYS
+    regime_text  TEXT,
+    recorded_at  TEXT
+);

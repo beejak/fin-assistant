@@ -1,0 +1,19 @@
+[Unit]
+Description=Financial Assistant Telegram Bot Listener
+Documentation=file:/root/fin-assistant/scripts/bot_listener.py
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/fin-assistant
+ExecStart=/usr/bin/python3 scripts/bot_listener.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=fin-bot-listener
+
+[Install]
+WantedBy=multi-user.target

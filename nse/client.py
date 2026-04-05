@@ -3,6 +3,7 @@ NSE India API client.
 - Direct JSON API calls (no cookie warmup needed from this environment)
 - Handles gzip decompression; avoids brotli (requires brotlipy)
 - Retries on 401/403 with session refresh
+- Automatic fallback to yfinance for equity quotes when NSE is unreachable
 """
 import re
 import time
@@ -11,6 +12,72 @@ import requests
 from datetime import datetime
 
 log = logging.getLogger(__name__)
+
+# ── yfinance fallback ──────────────────────────────────────────────────────
+
+def _yf_quote(symbol: str) -> dict | None:
+    """
+    Fallback equity quote via yfinance when NSE is unavailable.
+    NSE symbol → Yahoo Finance ticker by appending .NS
+    """
+    try:
+        import yfinance as yf
+        t  = yf.Ticker(f"{symbol.upper()}.NS")
+        fi = t.fast_info
+        ltp = fi.last_price
+        if ltp is None:
+            return None
+        hi = getattr(fi, "day_high", None) or ltp
+        lo = getattr(fi, "day_low",  None) or ltp
+        prev = getattr(fi, "previous_close", None) or ltp
+        pct  = round((ltp - prev) / prev * 100, 2) if prev else 0
+        wh   = getattr(fi, "year_high", None)
+        wl   = getattr(fi, "year_low",  None)
+        log.debug("yfinance fallback OK for %s: ltp=%s", symbol, ltp)
+        return {
+            "symbol": symbol.upper(),
+            "ltp":   ltp,
+            "pct":   pct,
+            "high":  hi,
+            "low":   lo,
+            "close": prev,
+            "wh52":  wh,
+            "wl52":  wl,
+            "_source": "yfinance",
+        }
+    except Exception as e:
+        log.debug("yfinance fallback %s: %s", symbol, e)
+        return None
+
+
+def _yf_indices() -> dict:
+    """
+    Fallback index snapshot via yfinance when NSE allIndices is unavailable.
+    Returns dict in same format as all_indices() for keys we care about.
+    """
+    try:
+        import yfinance as yf
+        mapping = {
+            "NIFTY 50":    "^NSEI",
+            "NIFTY BANK":  "^NSEBANK",
+        }
+        result = {}
+        for label, sym in mapping.items():
+            fi = yf.Ticker(sym).fast_info
+            if fi.last_price:
+                prev = fi.previous_close or fi.last_price
+                pct  = round((fi.last_price - prev) / prev * 100, 2) if prev else 0
+                result[label] = {
+                    "index":         label,
+                    "last":          fi.last_price,
+                    "percentChange": pct,
+                    "_source":       "yfinance",
+                }
+        log.debug("yfinance index fallback: %d indices", len(result))
+        return result
+    except Exception as e:
+        log.debug("yfinance index fallback: %s", e)
+        return {}
 
 BASE = "https://www.nseindia.com"
 HEADERS = {
@@ -77,17 +144,18 @@ def is_market_open() -> bool:
 # ── Indices ────────────────────────────────────────────────────────────────
 
 def all_indices() -> dict:
-    """Return dict keyed by index name."""
+    """Return dict keyed by index name. Falls back to yfinance on NSE failure."""
     data = get("/api/allIndices")
-    if not data:
-        return {}
-    return {d["index"]: d for d in data.get("data", [])}
+    if data:
+        return {d["index"]: d for d in data.get("data", [])}
+    log.warning("NSE allIndices unavailable — using yfinance fallback")
+    return _yf_indices()
 
 
 def gift_nifty() -> dict | None:
     """Return GIFT NIFTY data (pre-market indicator)."""
     idx = all_indices()
-    return idx.get("GIFT NIFTY") or idx.get("INDIA VIX") and None
+    return idx.get("GIFT NIFTY")
 
 
 def india_vix() -> float | None:
@@ -99,26 +167,28 @@ def india_vix() -> float | None:
 # ── Equity quotes ──────────────────────────────────────────────────────────
 
 def quote(symbol: str) -> dict | None:
+    """Equity quote from NSE. Falls back to yfinance if NSE is unreachable."""
     data = get(f"/api/quote-equity?symbol={symbol.upper()}")
-    if not data:
-        return None
-    try:
-        pi  = data["priceInfo"]
-        hl  = pi.get("intraDayHighLow") or {}
-        whl = pi.get("weekHighLow") or {}
-        return {
-            "symbol": symbol.upper(),
-            "ltp":    pi.get("lastPrice"),
-            "pct":    pi.get("pChange"),
-            "high":   hl.get("max"),
-            "low":    hl.get("min"),
-            "close":  pi.get("close") or pi.get("previousClose"),
-            "wh52":   whl.get("max"),
-            "wl52":   whl.get("min"),
-        }
-    except Exception as e:
-        log.warning("Quote parse %s: %s", symbol, e)
-        return None
+    if data:
+        try:
+            pi  = data["priceInfo"]
+            hl  = pi.get("intraDayHighLow") or {}
+            whl = pi.get("weekHighLow") or {}
+            return {
+                "symbol": symbol.upper(),
+                "ltp":    pi.get("lastPrice"),
+                "pct":    pi.get("pChange"),
+                "high":   hl.get("max"),
+                "low":    hl.get("min"),
+                "close":  pi.get("close") or pi.get("previousClose"),
+                "wh52":   whl.get("max"),
+                "wl52":   whl.get("min"),
+            }
+        except Exception as e:
+            log.warning("Quote parse %s: %s", symbol, e)
+
+    log.warning("NSE quote unavailable for %s — using yfinance fallback", symbol)
+    return _yf_quote(symbol)
 
 
 # ── Option chain ───────────────────────────────────────────────────────────
@@ -275,21 +345,3 @@ def corporate_actions(symbol: str) -> list[dict]:
             "purpose": row.get("purpose"),
         })
     return out
-
-
-def upcoming_events(symbols: list[str], days_ahead: int = 5) -> list[dict]:
-    """Return corporate actions for given symbols in the next N days."""
-    from datetime import datetime, timezone, timedelta
-    cutoff = (datetime.now(timezone.utc) + timedelta(days=days_ahead)).date()
-    today  = datetime.now(timezone.utc).date()
-    events = []
-    for sym in symbols:
-        for ev in corporate_actions(sym):
-            try:
-                ex = datetime.strptime(ev["ex_date"], "%d-%b-%Y").date()
-                if today <= ex <= cutoff:
-                    ev["days_away"] = (ex - today).days
-                    events.append(ev)
-            except Exception:
-                continue
-    return sorted(events, key=lambda x: x["days_away"])

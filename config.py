@@ -23,5 +23,45 @@ LOG_DIR = ROOT / "logs"
 LOG_DIR.mkdir(exist_ok=True)
 
 # Timezone
-from datetime import timezone, timedelta
+from datetime import timezone, timedelta, date as _date
 IST = timezone(timedelta(hours=5, minutes=30))
+
+# NSE market holidays — equity/cash segment (weekday closures only)
+# Source: NSE annual circular, cross-verified via Groww + IntegratedIndia
+# Update this list each year when NSE publishes the next year's circular.
+NSE_HOLIDAYS: dict[int, set[_date]] = {
+    2026: {
+        _date(2026,  1, 26),   # Republic Day
+        _date(2026,  3,  3),   # Holi
+        _date(2026,  3, 26),   # Shri Ram Navami
+        _date(2026,  3, 31),   # Shri Mahavir Jayanti
+        _date(2026,  4,  3),   # Good Friday
+        _date(2026,  4, 14),   # Dr. Baba Saheb Ambedkar Jayanti
+        _date(2026,  5,  1),   # Maharashtra Day
+        _date(2026,  5, 28),   # Bakri Id (Eid ul-Adha)
+        _date(2026,  6, 26),   # Muharram
+        _date(2026,  9, 14),   # Ganesh Chaturthi
+        _date(2026, 10,  2),   # Mahatma Gandhi Jayanti
+        _date(2026, 10, 20),   # Dussehra
+        _date(2026, 11, 10),   # Diwali — Balipratipada
+        _date(2026, 11, 24),   # Prakash Gurpurb (Guru Nanak Jayanti)
+        _date(2026, 12, 25),   # Christmas
+    },
+}
+
+
+def is_market_open(dt=None) -> bool:
+    """Return True if the NSE equity market is open on the given date.
+
+    Accepts a date, datetime (aware or naive), or defaults to today IST.
+    Returns False on weekends and on any date listed in NSE_HOLIDAYS.
+    """
+    from datetime import datetime
+    if dt is None:
+        dt = datetime.now(IST)
+    # Accept both date and datetime objects
+    d = dt.date() if hasattr(dt, "date") else dt
+    if d.weekday() >= 5:          # Saturday=5, Sunday=6
+        return False
+    holidays = NSE_HOLIDAYS.get(d.year, set())
+    return d not in holidays

@@ -109,12 +109,16 @@ def set_active(channel_id: int, active: bool) -> None:
 def list_channels(active_only: bool = False) -> list[dict]:
     """Return all discovered channels from DB."""
     _init_table()
-    where = "WHERE active=1" if active_only else ""
     with sqlite3.connect(DB_PATH) as c:
-        rows = c.execute(f"""
-            SELECT id, name, type, members_count, active, discovered_at
-            FROM monitored_channels {where}
-            ORDER BY name
-        """).fetchall()
+        if active_only:
+            rows = c.execute("""
+                SELECT id, name, type, members_count, active, discovered_at
+                FROM monitored_channels WHERE active=1 ORDER BY name
+            """).fetchall()
+        else:
+            rows = c.execute("""
+                SELECT id, name, type, members_count, active, discovered_at
+                FROM monitored_channels ORDER BY name
+            """).fetchall()
     return [{"id":r[0],"name":r[1],"type":r[2],"members":r[3],
              "active":bool(r[4]),"discovered_at":r[5]} for r in rows]
