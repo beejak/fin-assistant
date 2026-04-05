@@ -97,7 +97,8 @@ Total      54   0 failures · 0 errors
 | `bridge/discover.py` built SQL via f-string (`f"... {where}"`) — wrong pattern even though input was safe | Medium | Replaced with two explicit queries |
 | `nse/client.py` `gift_nifty()` returned `idx.get("GIFT NIFTY") or idx.get("INDIA VIX") and None` — Python operator precedence made it return `None` whenever GIFT NIFTY was absent and INDIA VIX was present | Medium | Simplified to `idx.get("GIFT NIFTY")` |
 | `nse/client.py` `upcoming_events()` — dead function, never called anywhere, used UTC instead of IST, duplicated `enrichers/events.py` | Low | Deleted |
-| `cron_guard.sh` has no `flock` — two simultaneous instances both execute the job | Known | Documented; jobs are idempotent so risk is low |
+| `cron_guard.sh`: no `flock` — two concurrent instances for same job both executed it, causing duplicate Telegram alerts and double-graded signals | High | Fixed — `flock -n` on fd 9; second instance exits immediately with "already running" log |
+| `cron_guard.sh`: at-fallback recursively called `cron_guard.sh` with `${JOB}_fallback` as job name — each failure scheduled `${JOB}_fallback_fallback`, etc., unbounded chain | Medium | Fixed — fallback now runs underlying command directly, never calls `cron_guard.sh` again |
 
 **Key things confirmed working:**
 
@@ -106,6 +107,7 @@ Total      54   0 failures · 0 errors
 - `fin-scheduler` auto-restarts within 12 seconds after `kill -9`
 - 100 concurrent `ran_today()` calls return consistent results with zero torn reads
 - A full Monday schedule fires exactly 10 slots across 600+ simulated poll minutes
+- `flock` prevents two concurrent `cron_guard.sh` instances from double-firing the same job — second instance exits in <1ms
 
 Full findings: [`TEST_REPORT.md`](TEST_REPORT.md)
 
@@ -295,7 +297,14 @@ python main.py disable <id>      # mute without deleting history
 python main.py enable  <id>      # unmute
 python main.py discover          # re-scan after joining new channels
 systemctl restart fin-bridge     # pick up channel list changes
+
+# Join curated channels from CHANNEL_SCOUT.md (Priority 1 + 2)
+python3 scripts/join_scout_channels.py
+python3 scripts/join_scout_channels.py --priority3    # also join Priority 3 (no SEBI)
+python3 scripts/join_scout_channels.py --dry-run      # preview without joining
 ```
+
+> **Note:** `discover` re-adds every channel in your Telegram account with `active=1`. Run the trading channel filter after any full discover to remove noise. See Lessons Learned in `FUTURE_IDEAS.md`.
 
 Direct SQL:
 
@@ -308,6 +317,19 @@ GROUP BY name ORDER BY msgs DESC;
 -- Mute a channel by name
 UPDATE monitored_channels SET active=0 WHERE name LIKE '%SomeChannel%';
 ```
+
+---
+
+## Daily channel scouting
+
+`scripts/channel_scout.py` runs every day at 7:00 PM IST (after market close). It scrapes Reddit (IndianStreetBets, IndiaInvestments, IndianStockMarket) and TradingQnA for newly mentioned Indian trading Telegram channels, filters to ≥2 independent mentions, and appends findings to `CHANNEL_SCOUT.md`.
+
+Channels in the scout report are **not automatically added** to monitoring — they require manual review first. The curated starting list (50 channels, researched and SEBI-verified where possible) is in `CHANNEL_SCOUT.md`.
+
+To subscribe to a scouted channel and add it to monitoring:
+1. Add it to `CHANNEL_SCOUT.md` and the appropriate priority list in `scripts/join_scout_channels.py`
+2. Run `python3 scripts/join_scout_channels.py`
+3. The bridge picks it up on the next message from that channel
 
 ---
 

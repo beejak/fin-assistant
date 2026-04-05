@@ -1,6 +1,6 @@
 # Stress Test Report — fin-assistant cron recovery chain
 
-**Date:** 2026-04-04  
+**Date:** 2026-04-05  
 **Run by:** `python3 scripts/stress_test.py`  
 **Final result:** 54 / 54 passed — 0 failures, 0 errors
 
@@ -128,12 +128,14 @@ return different dates, creating a 5.5-hour window where a job the scheduler con
 | F5 | ran_today: 10-char date-only heartbeat (no T suffix) matches correctly | PASS | |
 | F6 | ran_today: partial 5-char date ("2026-") does NOT match → False | PASS | |
 | F7 | UTC/IST date: no mismatch during market hours (9:15–3:30 IST) | PASS | |
-| F8 | cron_guard: 2 simultaneous instances for same job | PASS | KNOWN RACE |
+| F8 | cron_guard: 2 simultaneous instances for same job | PASS | |
 
-**F8 — known race condition:** Two concurrent `cron_guard.sh` instances for the same job
-have no mutual exclusion (`flock` not used). Both may execute the job. The heartbeat file
-is safe (last write wins — atomic at the OS level for small writes), but the job itself
-can run twice. In practice this is harmless (all jobs are idempotent) but is documented.
+**F8 — flock fix confirmed:** `cron_guard.sh` now acquires a per-job lock file using
+`flock -n` (non-blocking) on file descriptor 9 before executing any job. When two instances
+race for the same job, exactly one acquires the lock and runs the job; the second detects
+the lock is held, logs "already running", and exits immediately. The test verifies: exactly
+1 run completes, the heartbeat is written once, and the losing instance's log contains
+"already running".
 
 **F7 — UTC/IST date edge case documented:** Between UTC midnight (18:30 IST) and IST
 midnight (23:59 IST), UTC date is one day behind IST date. This only matters post-market;
@@ -186,7 +188,8 @@ within 12 seconds (RestartSec=10 + startup time).
 |---|---|---|---|---|
 | 1 | Medium | `watchdog.sh` | `ran_today()` used UTC date (`date -u`) while `scheduler.py` used IST date. After 18:30 IST (UTC midnight), both functions returned different answers for the same heartbeat file, causing the watchdog to see a job as "ran" while the scheduler would re-fire it. | Yes — `watchdog.sh` now uses `TZ=Asia/Kolkata date` |
 | 2 | Low | `stress_test.py` (test) | `date(2030, 4, 7)` assumed to be Monday; it is Sunday. Wrong test assumption, not a code bug. | Fixed test |
-| 3 | Known | `cron_guard.sh` | No `flock` protection on simultaneous invocations. Two parallel instances for the same job will both run it. Job re-execution is harmless (all jobs are idempotent), heartbeat is safe. | Documented only — not fixed (low risk) |
+| 3 | Low | `cron_guard.sh` | No `flock` protection on simultaneous invocations. Two parallel instances for the same job will both run it. Job re-execution is harmless (all jobs are idempotent), heartbeat is safe. | Fixed — flock -n on fd 9 |
+| 4 | Medium | `cron_guard.sh` | `at`-fallback recursively called `cron_guard.sh` with `${JOB}_fallback` as the job name. If that invocation also failed, it scheduled `${JOB}_fallback_fallback`, and so on — an unbounded recursive chain of `at` jobs. | Fixed — fallback now runs the underlying command directly, bypassing `cron_guard` |
 
 ---
 
@@ -201,6 +204,7 @@ within 12 seconds (RestartSec=10 + startup time).
 - `fin-scheduler` systemd service auto-restarts after `kill -9` within RestartSec=10 seconds
 - 100 concurrent `ran_today()` calls: no torn reads, no race conditions, all consistent
 - A full Monday schedule simulation fires exactly 10 slots across 600+ simulated minutes
+- `flock` prevents two simultaneous `cron_guard` instances from double-firing the same job — confirmed by test F8
 
 ---
 
