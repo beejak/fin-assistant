@@ -199,7 +199,7 @@ def check_bridge_freshness() -> Check:
         return c
     try:
         threshold = (datetime.now(IST) - timedelta(hours=BRIDGE_STALE_HOURS)).isoformat()
-        with sqlite3.connect(DB_PATH, timeout=5) as conn:
+        with sqlite3.connect(DB_PATH, timeout=15) as conn:
             row = conn.execute(
                 "SELECT MAX(timestamp) FROM messages"
             ).fetchone()
@@ -210,6 +210,11 @@ def check_bridge_freshness() -> Check:
             c.warn(f"Last message at {last_ts[:16]} -- bridge may be stalled")
         else:
             c.ok(f"last message at {last_ts[:16]}")
+    except sqlite3.OperationalError as e:
+        if "locked" in str(e).lower():
+            c.warn("DB locked by bridge (bridge is active but busy)")
+        else:
+            c.fail(str(e))
     except Exception as e:
         c.fail(str(e))
     return c

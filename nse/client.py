@@ -265,7 +265,7 @@ def oi_velocity(oc: dict, top_n: int = 5) -> list[dict]:
                     "strike": s["strike"], "type": side,
                     "oi": oi, "chg": chg,
                     "ltp": s[f"{side.lower()}_ltp"],
-                    "pct_chg": round(chg / (oi - chg) * 100, 1) if (oi - chg) > 0 else 0,
+                    "pct_chg": round(chg / (oi - chg) * 100, 1) if (oi - chg) != 0 else None,
                 })
     rows.sort(key=lambda x: abs(x["chg"]), reverse=True)
     return rows[:top_n]

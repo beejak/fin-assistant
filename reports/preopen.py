@@ -8,7 +8,7 @@ import time
 import logging
 from datetime import datetime, timezone, timedelta
 
-from config import DB_PATH, IST, BOT_TOKEN, OWNER_CHAT_ID
+from config import DB_PATH, IST, BOT_TOKEN, OWNER_CHAT_ID, IGNORED_CHAT_IDS
 from nse import client as nse
 from enrichers.fii_dii import last_n_days, format_fii_dii
 from enrichers.bulk_deals import get_today, format_bulk_deals
@@ -52,14 +52,17 @@ def run(dry_run: bool = False) -> None:
     fii_today   = fii_history[0] if fii_history else None
 
     # -- Overnight signals from DB --------------------------------------------
+    ignored_placeholders = ",".join("?" * len(IGNORED_CHAT_IDS))
+    ignored_list = list(IGNORED_CHAT_IDS) or [""]
     with sqlite3.connect(DB_PATH) as conn:
-        rows = conn.execute("""
+        rows = conn.execute(f"""
             SELECT c.name, m.content, m.timestamp
             FROM messages m JOIN chats c ON m.chat_jid = c.jid
-            WHERE m.chat_jid != 'tg:476254580'
+            WHERE m.chat_jid NOT IN ({ignored_placeholders or '?'})
+              AND m.content IS NOT NULL
               AND m.timestamp >= datetime('now', '-12 hours')
             ORDER BY m.timestamp DESC
-        """).fetchall()
+        """, ignored_list).fetchall()
 
     overnight_sigs = []
     seen = set()

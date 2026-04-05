@@ -26,6 +26,15 @@ LOG_DIR.mkdir(exist_ok=True)
 from datetime import timezone, timedelta, date as _date
 IST = timezone(timedelta(hours=5, minutes=30))
 
+# Chat JIDs to exclude from signal scanning (own account, service chats, etc.)
+# Format used by the bridge: 'tg:<numeric_chat_id>'
+# The default entry is the user's own Saved Messages / self-chat.
+IGNORED_CHAT_IDS: set[str] = set(
+    f"tg:{jid}" for jid in
+    os.getenv("IGNORED_CHAT_IDS", "476254580").split(",")
+    if jid.strip()
+)
+
 # NSE market holidays — equity/cash segment (weekday closures only)
 # Source: NSE annual circular, cross-verified via Groww + IntegratedIndia
 # Update this list each year when NSE publishes the next year's circular.

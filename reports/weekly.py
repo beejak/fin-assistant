@@ -3,6 +3,7 @@ Weekly channel accuracy scorecard.
 Runs every Monday morning -- shows last week's hit rates per channel,
 surfaces which channels are worth following and which to mute.
 """
+import html
 import json
 import sqlite3
 import logging
@@ -80,7 +81,7 @@ def run(dry_run: bool = False) -> None:
         verdict = ("[OK] FOLLOW" if pct >= 60 else
                    "[WARN] SELECTIVE" if pct >= 40 else
                    "[FAIL] MUTE")
-        L.append(f"{medal} <b>{channel[:30]}</b>")
+        L.append(f"{medal} <b>{html.escape(channel[:30])}</b>")
         L.append(f"    {h}/{t} hit ({pct}%)  SL:{s}  Open:{o}  {verdict}")
         L.append(f"    [{bar}]")
 

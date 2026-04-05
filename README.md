@@ -289,7 +289,7 @@ These are handled by `fin-bot-listener` (systemd, Restart=always). If cron and t
 
 ## Channel management
 
-The `monitored_channels` table is the source of truth. The bridge reads it at startup.
+The `monitored_channels` table is the source of truth. The bridge reads it at startup. The DB currently has **74 active trading channels** (59 existing + 15 newly joined from `CHANNEL_SCOUT.md`).
 
 ```bash
 python main.py channels          # list all with status (ON/OFF)

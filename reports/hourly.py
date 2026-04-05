@@ -7,6 +7,7 @@ Hourly signal scanner.
 - Confluence detection
 - Corporate event flags
 """
+import html
 import re
 import sqlite3
 import time
@@ -14,7 +15,7 @@ import logging
 from datetime import datetime, timezone
 from collections import defaultdict
 
-from config import DB_PATH, IST
+from config import DB_PATH, IST, IGNORED_CHAT_IDS
 from nse import client as nse
 from signals.extractor import extract, INDICES, NOISE, OPT_STRIKE_RE, base_symbol, is_index
 from signals import confluence as conf_mod
@@ -74,14 +75,17 @@ def run(dry_run: bool = False) -> None:
     db_init()
 
     # -- 1. Read new messages -------------------------------------------------
+    ignored_list = list(IGNORED_CHAT_IDS) or [""]
+    ignored_placeholders = ",".join("?" * len(ignored_list))
     with sqlite3.connect(DB_PATH) as conn:
-        rows = conn.execute("""
+        rows = conn.execute(f"""
             SELECT c.name, m.content, m.timestamp
             FROM messages m JOIN chats c ON m.chat_jid = c.jid
-            WHERE m.chat_jid != 'tg:476254580'
+            WHERE m.chat_jid NOT IN ({ignored_placeholders})
+              AND m.content IS NOT NULL
               AND m.timestamp >= datetime('now', '-65 minutes')
             ORDER BY m.timestamp DESC
-        """).fetchall()
+        """, ignored_list).fetchall()
     log.info("Hourly: %d messages", len(rows))
 
     # -- 2. Extract & deduplicate ---------------------------------------------
@@ -207,7 +211,7 @@ def run(dry_run: bool = False) -> None:
     # Signals by channel (sorted by confidence: HIGH -> MED -> UNKNOWN -> LOW)
     for channel, sigs in by_channel.items():
         score_badge = ch_scores.format_score_badge(channel, scores)
-        ch_header = f"<b>>> {channel}</b>  ({len(sigs)})"
+        ch_header = f"<b>>> {html.escape(channel)}</b>  ({len(sigs)})"
         if score_badge:
             ch_header += f"  <i>{score_badge}</i>"
         L.append(ch_header)

@@ -36,7 +36,15 @@ def get_confluences(date_str: str, min_channels: int = 2) -> list[dict]:
         # Parse entry prices and compute consensus
         def parse_nums(s):
             if not s: return []
-            return [float(x) for x in s.split(",") if x and x != "None"]
+            result = []
+            for x in s.split(","):
+                if not x or x == "None":
+                    continue
+                try:
+                    result.append(float(x))
+                except ValueError:
+                    pass
+            return result
 
         entry_vals = parse_nums(entries)
         sl_vals    = parse_nums(sls)

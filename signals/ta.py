@@ -21,17 +21,35 @@ except ImportError:
 
 log = logging.getLogger(__name__)
 
-_cache: dict = {}  # symbol -> {data, fetched_at}
+_cache: dict = {}          # symbol -> {data, fetched_at}
+_CACHE_TTL_S  = 3600       # evict entries older than 1 hour
+_CACHE_MAXSIZE = 150       # prevent unbounded growth; LRU-style eviction
+
+
+def _evict_cache() -> None:
+    """Remove entries older than TTL, then cap total size."""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    stale = [k for k, v in _cache.items()
+             if (now - v["fetched_at"]).total_seconds() > _CACHE_TTL_S]
+    for k in stale:
+        del _cache[k]
+    # If still over max, remove oldest entries
+    if len(_cache) > _CACHE_MAXSIZE:
+        sorted_keys = sorted(_cache, key=lambda k: _cache[k]["fetched_at"])
+        for k in sorted_keys[:len(_cache) - _CACHE_MAXSIZE]:
+            del _cache[k]
 
 
 def _fetch(symbol: str, period: str = "3mo") -> pd.DataFrame | None:
     if not HAS_YF:
         return None
     from datetime import datetime, timezone
+    _evict_cache()
     cached = _cache.get(symbol)
     if cached:
-        age = (datetime.now(timezone.utc) - cached["fetched_at"]).seconds
-        if age < 3600:  # 1h cache
+        age = (datetime.now(timezone.utc) - cached["fetched_at"]).total_seconds()
+        if age < _CACHE_TTL_S:
             return cached["data"]
     try:
         ticker = yf.Ticker(f"{symbol}.NS")
@@ -92,13 +110,23 @@ def enrich(symbol: str, ltp: float | None = None) -> dict:
         except Exception:
             pass
     else:
-        # Fallback: manual RSI
-        delta = close.diff()
-        gain  = delta.clip(lower=0).rolling(14).mean()
-        loss  = (-delta.clip(upper=0)).rolling(14).mean()
-        rs    = gain / loss
-        rsi   = 100 - (100 / (1 + rs))
-        result["rsi"] = round(float(rsi.iloc[-1]), 1)
+        # Fallback: manual RSI (pandas_ta not available)
+        try:
+            delta = close.diff()
+            gain  = delta.clip(lower=0).rolling(14).mean()
+            loss  = (-delta.clip(upper=0)).rolling(14).mean()
+            # Guard: loss == 0 means pure uptrend → RSI = 100
+            last_loss = float(loss.iloc[-1])
+            if last_loss == 0:
+                result["rsi"] = 100.0
+            else:
+                rs  = gain / loss.replace(0, float("nan"))
+                rsi = 100 - (100 / (1 + rs))
+                val = float(rsi.iloc[-1])
+                if not (val != val):  # NaN check
+                    result["rsi"] = round(val, 1)
+        except Exception:
+            pass
         sma = close.rolling(20).mean()
         result["sma20"] = round(float(sma.iloc[-1]), 2)
         ref = ltp or float(close.iloc[-1])

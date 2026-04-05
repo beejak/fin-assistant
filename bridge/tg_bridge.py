@@ -51,6 +51,8 @@ def write_to_db(chat_id, chat_name, msg_id, sender_id, sender_name, text, ts):
               (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message)
             VALUES (?,?,?,?,?,?,0,0)
         """, (f"tg_{chat_id}_{msg_id}", jid, str(sender_id), sender_name, text, ts_iso))
+        # conn.commit() is implicit on __exit__ of the with-block; explicit here
+        # only to flush immediately so the bridge liveness check can see the row.
         conn.commit()
 
 

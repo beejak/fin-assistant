@@ -160,10 +160,13 @@ def main():
             updates = resp.get("result", [])
 
             for update in updates:
-                offset = update["update_id"] + 1
-                msg = update.get("message", {})
+                msg     = update.get("message", {})
                 chat_id = str((msg.get("chat") or {}).get("id", ""))
                 text    = (msg.get("text") or "").strip().lower().split()[0]
+
+                # Advance offset unconditionally so we never re-process this
+                # update even if execution fails. Commands are idempotent.
+                offset = update["update_id"] + 1
 
                 # Security: only owner
                 if chat_id != str(OWNER_CHAT_ID):
@@ -171,21 +174,25 @@ def main():
 
                 log.info("Command received: %s", text)
 
-                if text == "/status":
-                    handle_status()
-                elif text in COMMANDS:
-                    spec = COMMANDS[text]
-                    if spec:
-                        name, cmd = spec
-                        run_job(name, cmd)
-                    else:
+                try:
+                    if text == "/status":
                         handle_status()
-                elif text.startswith("/"):
-                    send(
-                        "Unknown command. Available:\n"
-                        "/run_preopen  /run_hourly  /run_eod  /run_weekly\n"
-                        "/health  /status"
-                    )
+                    elif text in COMMANDS:
+                        spec = COMMANDS[text]
+                        if spec:
+                            name, cmd = spec
+                            run_job(name, cmd)
+                        else:
+                            handle_status()
+                    elif text.startswith("/"):
+                        send(
+                            "Unknown command. Available:\n"
+                            "/run_preopen  /run_hourly  /run_eod  /run_weekly\n"
+                            "/health  /status"
+                        )
+                except Exception as e:
+                    log.error("Command handler failed for '%s': %s", text, e)
+                    send(f"[ERROR] Command <code>{text}</code> failed:\n{e}")
 
         except KeyboardInterrupt:
             log.info("Shutting down")

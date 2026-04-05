@@ -147,7 +147,12 @@ def check_signals(dry_run: bool = False) -> int:
                 continue
 
             sl      = s["sl"]
-            targets = json.loads(s["targets"] or "[]")
+            try:
+                targets = json.loads(s["targets"] or "[]")
+            except (json.JSONDecodeError, TypeError):
+                log.warning("Corrupted targets JSON for signal rowid=%s instrument=%s — skipping",
+                            s.get("rowid"), s.get("instrument"))
+                targets = []
             alerted = _load_alerts(s["intraday_alerts"])
             changed = False
             msgs    = []

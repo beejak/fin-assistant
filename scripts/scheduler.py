@@ -174,7 +174,7 @@ def main():
             now = datetime.now(IST)
             check_schedule(now)
         except Exception as e:
-            log.error("Schedule check error: %s", e)
+            log.exception("Schedule check error: %s", e)
         time.sleep(POLL_SECS)
 
 

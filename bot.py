@@ -1,9 +1,12 @@
 """Telegram bot sender."""
+import time
 import logging
 import requests
 from config import BOT_TOKEN, OWNER_CHAT_ID
 
 log = logging.getLogger(__name__)
+
+_MAX_RETRIES = 3
 
 
 def send(text: str, chat_id: int | None = None, dry_run: bool = False) -> None:
@@ -12,10 +15,37 @@ def send(text: str, chat_id: int | None = None, dry_run: bool = False) -> None:
         return
     cid = chat_id or OWNER_CHAT_ID
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    import time
     for chunk in [text[i:i+4000] for i in range(0, len(text), 4000)]:
-        r = requests.post(url, json={"chat_id": cid, "text": chunk,
-                                     "parse_mode": "HTML"}, timeout=15)
-        if not r.ok:
-            log.error("Telegram send failed: %s", r.text[:200])
+        _send_chunk(url, cid, chunk)
         time.sleep(0.3)
+
+
+def _send_chunk(url: str, cid: int, chunk: str) -> None:
+    """Send one chunk with exponential backoff on rate limits."""
+    wait = 1
+    for attempt in range(1, _MAX_RETRIES + 1):
+        try:
+            r = requests.post(url, json={"chat_id": cid, "text": chunk,
+                                         "parse_mode": "HTML"}, timeout=15)
+            if r.status_code == 429:
+                retry_after = r.json().get("parameters", {}).get("retry_after", wait)
+                log.warning("Telegram 429 rate limit — waiting %ds (attempt %d/%d)",
+                            retry_after, attempt, _MAX_RETRIES)
+                time.sleep(retry_after)
+                wait *= 2
+                continue
+            if not r.ok:
+                log.error("Telegram send failed (attempt %d/%d): %s",
+                          attempt, _MAX_RETRIES, r.text[:200])
+                if attempt < _MAX_RETRIES:
+                    time.sleep(wait)
+                    wait *= 2
+                continue
+            return   # success
+        except requests.RequestException as e:
+            log.error("Telegram send exception (attempt %d/%d): %s",
+                      attempt, _MAX_RETRIES, e)
+            if attempt < _MAX_RETRIES:
+                time.sleep(wait)
+                wait *= 2
+    log.error("Telegram send gave up after %d attempts", _MAX_RETRIES)

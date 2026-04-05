@@ -46,7 +46,11 @@ ran_today() {
     local hb="${HB_DIR}/${job}.last_ok"
     [[ ! -f "$hb" ]] && return 1
     local last_ok
-    last_ok=$(cat "$hb" 2>/dev/null | cut -c1-10)   # YYYY-MM-DD
+    last_ok=$(cat "$hb" 2>/dev/null | cut -c1-10)   # first 10 chars = YYYY-MM-DD
+    # Validate format before comparing to avoid corrupt files passing the check
+    if [[ ! "$last_ok" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+        return 1
+    fi
     local today
     today=$(TZ=Asia/Kolkata date '+%Y-%m-%d')   # IST — consistent with scheduler.py
     [[ "$last_ok" == "$today" ]]

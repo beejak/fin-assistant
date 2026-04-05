@@ -61,11 +61,12 @@ ENV="${REPO_DIR}/.env"
 [[ -f "${ENV}" ]] && FILES_TO_BACKUP+=("${ENV}")
 
 # Pyrogram session file (try common locations)
-for SESSION_GLOB in "${HOME}"/*.session "${REPO_DIR}"/*.session; do
-    for F in ${SESSION_GLOB}; do
-        [[ -f "${F}" ]] && FILES_TO_BACKUP+=("${F}")
-    done
+# nullglob prevents unmatched globs from being treated as literal strings
+shopt -s nullglob
+for F in "${HOME}"/*.session "${REPO_DIR}"/*.session "${REPO_DIR}"/store/*.session; do
+    [[ -f "${F}" ]] && FILES_TO_BACKUP+=("${F}")
 done
+shopt -u nullglob
 
 if [[ ${#FILES_TO_BACKUP[@]} -eq 0 ]]; then
     log "Nothing to back up (no DB or session files found)"

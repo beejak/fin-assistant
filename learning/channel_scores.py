@@ -122,7 +122,10 @@ def get_all() -> dict[str, dict]:
 
 
 def format_score_badge(channel: str, scores: dict) -> str:
-    """Return a short badge string for a channel, e.g. '*60% [HIGH]'"""
+    """Return a short badge string for a channel, e.g. '*60% [HIGH]'
+    Channel names are NOT included in the badge — caller renders the name
+    separately with html.escape() before embedding in Telegram HTML messages.
+    """
     s = scores.get(channel)
     if not s or s["hit_rate"] is None:
         return ""
