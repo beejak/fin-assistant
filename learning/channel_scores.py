@@ -15,7 +15,7 @@ import sqlite3
 import logging
 from datetime import datetime
 
-from config import DB_PATH, IST
+from config import db, DB_PATH, IST
 
 log = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ def update() -> dict[str, dict]:
     Recompute channel scores from signal_log and write to channel_scores table.
     Returns scores dict keyed by channel name.
     """
-    with sqlite3.connect(DB_PATH) as conn:
+    with db() as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS channel_scores (
                 channel     TEXT PRIMARY KEY,
@@ -55,7 +55,7 @@ def update() -> dict[str, dict]:
 
     scores = {}
     now_iso = datetime.now(IST).isoformat()
-    with sqlite3.connect(DB_PATH) as conn:
+    with db() as conn:
         for channel, total, hits, sl_hits in rows:
             closed = hits + sl_hits
             hit_rate = round(hits / closed * 100, 1) if closed > 0 else None
@@ -105,7 +105,7 @@ def update() -> dict[str, dict]:
 def get_all() -> dict[str, dict]:
     """Load current scores from DB. Returns {} if table doesn't exist yet."""
     try:
-        with sqlite3.connect(DB_PATH) as conn:
+        with db() as conn:
             rows = conn.execute("""
                 SELECT channel, total, hits, sl_hits, hit_rate, confidence, suggest_mute
                 FROM channel_scores

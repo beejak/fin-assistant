@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from pyrogram import Client, filters
 from pyrogram.types import Message
 
-from config import TG_API_ID, TG_API_HASH, TG_SESSION, DB_PATH
+from config import db, TG_API_ID, TG_API_HASH, TG_SESSION, DB_PATH
 from bridge.discover import get_active_ids, _init_table
 
 logging.basicConfig(
@@ -38,7 +38,7 @@ app = Client(TG_SESSION, api_id=TG_API_ID, api_hash=TG_API_HASH)
 def write_to_db(chat_id, chat_name, msg_id, sender_id, sender_name, text, ts):
     jid    = f"tg:{chat_id}"
     ts_iso = ts.isoformat()
-    with sqlite3.connect(DB_PATH) as conn:
+    with db() as conn:
         conn.execute("""
             INSERT INTO chats (jid, name, last_message_time, channel, is_group)
             VALUES (?, ?, ?, 'telegram', 1)

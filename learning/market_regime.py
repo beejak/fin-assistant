@@ -15,7 +15,7 @@ import sqlite3
 import logging
 from datetime import datetime
 
-from config import DB_PATH, IST
+from config import db, DB_PATH, IST
 
 log = logging.getLogger(__name__)
 
@@ -49,7 +49,7 @@ def snapshot(vix: float | None, nifty_close: float | None) -> dict:
     now      = datetime.now(IST)
     date_str = now.strftime("%Y-%m-%d")
 
-    with sqlite3.connect(DB_PATH) as conn:
+    with db() as conn:
         _init_table(conn)
 
         # FII net over last N days
@@ -125,7 +125,7 @@ def snapshot(vix: float | None, nifty_close: float | None) -> dict:
         "recorded_at": now.isoformat(),
     }
 
-    with sqlite3.connect(DB_PATH) as conn:
+    with db() as conn:
         _init_table(conn)
         conn.execute("""
             INSERT INTO market_regime
@@ -148,7 +148,7 @@ def snapshot(vix: float | None, nifty_close: float | None) -> dict:
 def get_latest() -> dict | None:
     """Load the most recent stored regime."""
     try:
-        with sqlite3.connect(DB_PATH) as conn:
+        with db() as conn:
             _init_table(conn)
             row = conn.execute("""
                 SELECT date, vix, vix_label, fii_net_5d, flow_label,

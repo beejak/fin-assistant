@@ -16,7 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from pyrogram import Client
-from config import TG_API_ID, TG_API_HASH, TG_SESSION, DB_PATH, IST
+from config import db, TG_API_ID, TG_API_HASH, TG_SESSION, DB_PATH, IST
 from bridge.discover import list_channels, _init_table
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
@@ -32,7 +32,7 @@ SINCE_UTC = (datetime.now(IST) - timedelta(days=DAYS)).replace(
 
 def write_to_db(chat_id, chat_name, msg_id, sender_id, sender_name, text, ts):
     jid = f"tg:{chat_id}"
-    with sqlite3.connect(DB_PATH) as conn:
+    with db() as conn:
         conn.execute("""
             INSERT INTO chats (jid, name, last_message_time, channel, is_group)
             VALUES (?,?,?,'telegram',1)

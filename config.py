@@ -2,6 +2,7 @@
 Central config. All secrets come from .env (never hardcoded here).
 """
 import os
+import sqlite3
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -57,6 +58,20 @@ NSE_HOLIDAYS: dict[int, set[_date]] = {
         _date(2026, 12, 25),   # Christmas
     },
 }
+
+
+def db(timeout: float = 15.0) -> sqlite3.Connection:
+    """
+    Open and return a WAL-mode SQLite connection to the main DB.
+
+    WAL allows concurrent readers while a write is in progress, preventing
+    the bridge from blocking report queries and vice versa. All callers
+    should use this instead of sqlite3.connect(DB_PATH) directly.
+    """
+    conn = sqlite3.connect(DB_PATH, timeout=timeout)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")   # safe with WAL; faster than FULL
+    return conn
 
 
 def is_market_open(dt=None) -> bool:

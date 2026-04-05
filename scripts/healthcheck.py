@@ -29,7 +29,7 @@ from pathlib import Path
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
-from config import DB_PATH, BOT_TOKEN, OWNER_CHAT_ID, IST, is_market_open
+from config import db, DB_PATH, BOT_TOKEN, OWNER_CHAT_ID, IST, is_market_open
 
 logging.basicConfig(
     level=logging.INFO,
@@ -140,7 +140,7 @@ def check_db() -> Check:
             c.fail(f"DB file not found: {DB_PATH}")
             return c
         size_mb = db_path.stat().st_size // (1024 * 1024)
-        with sqlite3.connect(DB_PATH, timeout=5) as conn:
+        with db(timeout=5) as conn:
             conn.execute("SELECT 1")
             tables = conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'"
@@ -199,7 +199,7 @@ def check_bridge_freshness() -> Check:
         return c
     try:
         threshold = (datetime.now(IST) - timedelta(hours=BRIDGE_STALE_HOURS)).isoformat()
-        with sqlite3.connect(DB_PATH, timeout=15) as conn:
+        with db(timeout=15) as conn:
             row = conn.execute(
                 "SELECT MAX(timestamp) FROM messages"
             ).fetchone()

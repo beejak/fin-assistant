@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from pyrogram import Client
 from pyrogram.enums import ChatType
-from config import TG_API_ID, TG_API_HASH, TG_SESSION, DB_PATH, IST
+from config import db, TG_API_ID, TG_API_HASH, TG_SESSION, DB_PATH, IST
 
 log = logging.getLogger(__name__)
 
@@ -27,7 +27,7 @@ WATCH_TYPES = {ChatType.CHANNEL, ChatType.SUPERGROUP, ChatType.GROUP}
 
 
 def _init_table():
-    with sqlite3.connect(DB_PATH) as c:
+    with db() as c:
         c.execute("""
             CREATE TABLE IF NOT EXISTS monitored_channels (
                 id             INTEGER PRIMARY KEY,
@@ -65,7 +65,7 @@ async def _discover(dry: bool = False) -> list[dict]:
 
     now = datetime.now(IST).isoformat()
     _init_table()
-    with sqlite3.connect(DB_PATH) as c:
+    with db() as c:
         for ch in channels:
             c.execute("""
                 INSERT INTO monitored_channels (id, name, type, members_count, discovered_at, active)
@@ -89,7 +89,7 @@ def run(dry: bool = False) -> list[dict]:
 def get_active_ids() -> set[int]:
     """Return set of active channel IDs from DB (used by bridge at startup)."""
     _init_table()
-    with sqlite3.connect(DB_PATH) as c:
+    with db() as c:
         rows = c.execute(
             "SELECT id FROM monitored_channels WHERE active=1"
         ).fetchall()
@@ -98,7 +98,7 @@ def get_active_ids() -> set[int]:
 
 def set_active(channel_id: int, active: bool) -> None:
     """Enable or disable monitoring for a specific channel."""
-    with sqlite3.connect(DB_PATH) as c:
+    with db() as c:
         c.execute(
             "UPDATE monitored_channels SET active=? WHERE id=?",
             (1 if active else 0, channel_id)
@@ -109,7 +109,7 @@ def set_active(channel_id: int, active: bool) -> None:
 def list_channels(active_only: bool = False) -> list[dict]:
     """Return all discovered channels from DB."""
     _init_table()
-    with sqlite3.connect(DB_PATH) as c:
+    with db() as c:
         if active_only:
             rows = c.execute("""
                 SELECT id, name, type, members_count, active, discovered_at

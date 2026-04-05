@@ -9,7 +9,7 @@ import logging
 from datetime import datetime, timezone
 from collections import defaultdict
 
-from config import DB_PATH, IST
+from config import db, DB_PATH, IST
 from nse import client as nse
 from enrichers.fii_dii import store_today as store_fii, last_n_days, format_fii_dii
 from enrichers.bulk_deals import store_today as store_bulk, get_today, format_bulk_deals
@@ -75,7 +75,7 @@ def run(dry_run: bool = False) -> None:
         log.warning("Bulk deals store: %s", e)
 
     # -- Load today's open signals --------------------------------------------
-    with sqlite3.connect(DB_PATH) as conn:
+    with db() as conn:
         rows = conn.execute(
             "SELECT * FROM signal_log WHERE date=? AND result='OPEN'", (date_str,)
         ).fetchall()
@@ -109,7 +109,7 @@ def run(dry_run: bool = False) -> None:
 
     # -- Grade each signal ----------------------------------------------------
     graded = []
-    with sqlite3.connect(DB_PATH) as conn:
+    with db() as conn:
         for s in sigs:
             sym = base_symbol(s["instrument"])
             q   = quotes.get(sym)

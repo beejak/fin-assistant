@@ -5,7 +5,7 @@ Stores in fii_dii_daily table and formats for briefings.
 import sqlite3
 import logging
 from datetime import datetime
-from config import DB_PATH, IST
+from config import db, DB_PATH, IST
 from nse.client import fii_dii as fetch_fii_dii
 
 log = logging.getLogger(__name__)
@@ -20,7 +20,7 @@ def store_today() -> dict | None:
     date_str = datetime.now(IST).strftime("%Y-%m-%d")
     now      = datetime.now(IST).isoformat()
 
-    with sqlite3.connect(DB_PATH) as conn:
+    with db() as conn:
         conn.execute("""
             INSERT OR REPLACE INTO fii_dii_daily
               (date, fii_buy, fii_sell, fii_net, dii_buy, dii_sell, dii_net, fetched_at)
@@ -37,7 +37,7 @@ def store_today() -> dict | None:
 
 
 def last_n_days(n: int = 5) -> list[dict]:
-    with sqlite3.connect(DB_PATH) as conn:
+    with db() as conn:
         rows = conn.execute("""
             SELECT date, fii_buy, fii_sell, fii_net, dii_buy, dii_sell, dii_net
             FROM fii_dii_daily ORDER BY date DESC LIMIT ?

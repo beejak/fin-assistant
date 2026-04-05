@@ -10,7 +10,7 @@ import logging
 from datetime import datetime, timedelta
 from collections import defaultdict
 
-from config import DB_PATH, IST
+from config import db, DB_PATH, IST
 from bot import send
 from bridge.discover import list_channels, set_active
 from learning import channel_scores
@@ -23,7 +23,7 @@ def run(dry_run: bool = False) -> None:
     week_end = (now - timedelta(days=1)).strftime("%Y-%m-%d")          # yesterday
     week_start = (now - timedelta(days=7)).strftime("%Y-%m-%d")
 
-    with sqlite3.connect(DB_PATH) as conn:
+    with db() as conn:
         rows = conn.execute("""
             SELECT channel, instrument, direction, entry, sl, targets,
                    result, result_note, date
@@ -132,7 +132,7 @@ def _auto_mute(dry_run: bool = False) -> None:
     Uses a new table `auto_mute_streak` to count consecutive bad weeks
     per channel. Resets the streak when a channel recovers above threshold.
     """
-    with sqlite3.connect(DB_PATH) as conn:
+    with db() as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS auto_mute_streak (
                 channel     TEXT PRIMARY KEY,
@@ -147,7 +147,7 @@ def _auto_mute(dry_run: bool = False) -> None:
 
     muted_this_run = []
 
-    with sqlite3.connect(DB_PATH) as conn:
+    with db() as conn:
         for channel, score in scores.items():
             if channel not in active:
                 continue   # already inactive

@@ -27,7 +27,7 @@ from datetime import datetime
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
-from config import BOT_TOKEN, OWNER_CHAT_ID, IST
+from config import db, BOT_TOKEN, OWNER_CHAT_ID, IST
 
 logging.basicConfig(
     level=logging.INFO,
@@ -119,10 +119,8 @@ def handle_status() -> None:
 
     # DB message count today
     try:
-        import sqlite3
-        from config import DB_PATH
         today = datetime.now(IST).strftime("%Y-%m-%d")
-        with sqlite3.connect(DB_PATH) as conn:
+        with db() as conn:
             n = conn.execute(
                 "SELECT COUNT(*) FROM messages WHERE timestamp >= ?", (today,)
             ).fetchone()[0]

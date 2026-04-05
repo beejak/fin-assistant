@@ -10,7 +10,7 @@ import sqlite3
 import logging
 from datetime import datetime
 
-from config import DB_PATH, IST
+from config import db, DB_PATH, IST
 
 log = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ def update() -> dict:
     Recompute stats from signal_log for the last WINDOW_DAYS.
     Returns dict keyed by (instrument, direction).
     """
-    with sqlite3.connect(DB_PATH) as conn:
+    with db() as conn:
         _init_table(conn)
         rows = conn.execute("""
             SELECT instrument, direction,
@@ -54,7 +54,7 @@ def update() -> dict:
 
     stats = {}
     now_iso = datetime.now(IST).isoformat()
-    with sqlite3.connect(DB_PATH) as conn:
+    with db() as conn:
         _init_table(conn)
         for instrument, direction, total, hits, sl_hits in rows:
             closed   = hits + sl_hits
@@ -79,7 +79,7 @@ def update() -> dict:
 def get_stat(instrument: str, direction: str) -> dict | None:
     """Fetch stat for one instrument+direction. Returns None if not enough data."""
     try:
-        with sqlite3.connect(DB_PATH) as conn:
+        with db() as conn:
             _init_table(conn)
             row = conn.execute("""
                 SELECT total, hits, sl_hits, hit_rate

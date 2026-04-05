@@ -34,7 +34,8 @@
 
 # Every 5 minutes during market hours Mon-Fri (3:15-10:00 AM UTC = 9:15-3:30 PM IST)
 # Alerts immediately on target hit or SL breach for any open signal
-*/5 3-10 * * 1-5 cd /root/fin-assistant && /usr/bin/python3 scripts/price_monitor.py >> logs/price_monitor.log 2>&1
+# Wrapped in cron_guard for flock (prevents pile-up if NSE is slow)
+*/5 3-10 * * 1-5 cd /root/fin-assistant && /usr/bin/bash scripts/cron_guard.sh price_monitor /usr/bin/python3 scripts/price_monitor.py >> logs/price_monitor.log 2>&1
 
 # -- Health checks ------------------------------------------------------------
 

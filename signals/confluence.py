@@ -5,7 +5,7 @@ call the same instrument in the same direction on the same day.
 import sqlite3
 import logging
 from datetime import datetime
-from config import DB_PATH, IST
+from config import db, DB_PATH, IST
 
 log = logging.getLogger(__name__)
 
@@ -15,7 +15,7 @@ def get_confluences(date_str: str, min_channels: int = 2) -> list[dict]:
     Return signals where >= min_channels channels independently agree.
     Returns list of {instrument, direction, count, channels, entries, sls, targets}.
     """
-    with sqlite3.connect(DB_PATH) as conn:
+    with db() as conn:
         rows = conn.execute("""
             SELECT instrument, direction,
                    COUNT(DISTINCT channel) as cnt,

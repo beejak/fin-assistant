@@ -5,7 +5,7 @@ strikes with large buildup or unwinding since the last snapshot.
 import sqlite3
 import logging
 from datetime import datetime
-from config import DB_PATH, IST
+from config import db, DB_PATH, IST
 from nse.client import option_chain
 
 log = logging.getLogger(__name__)
@@ -17,7 +17,7 @@ def snapshot(symbols: list[str] = SYMBOLS) -> dict:
     """Fetch current OI for all strikes and store in oi_snapshots table."""
     now = datetime.now(IST).isoformat()
     stored = {}
-    with sqlite3.connect(DB_PATH) as conn:
+    with db() as conn:
         for sym in symbols:
             oc = option_chain(sym)
             if not oc:
@@ -49,7 +49,7 @@ def velocity_alerts(symbols: list[str] = SYMBOLS, top_n: int = 5,
     Return strikes with OI change ≥ min_pct % between snapshots.
     """
     alerts = {}
-    with sqlite3.connect(DB_PATH) as conn:
+    with db() as conn:
         for sym in symbols:
             # Get last two snapshot timestamps
             times = conn.execute("""

@@ -5,7 +5,7 @@ Flags signals where the stock has a corporate action within N days.
 import sqlite3
 import logging
 from datetime import datetime, timezone, timedelta
-from config import DB_PATH, IST
+from config import db, DB_PATH, IST
 from nse.client import corporate_actions
 
 log = logging.getLogger(__name__)
@@ -15,7 +15,7 @@ def refresh_events(symbols: list[str], days_ahead: int = 7) -> int:
     """Fetch and store upcoming corporate events for a list of symbols."""
     now      = datetime.now(IST).isoformat()
     stored   = 0
-    with sqlite3.connect(DB_PATH) as conn:
+    with db() as conn:
         for sym in symbols:
             for ev in corporate_actions(sym):
                 try:
@@ -37,7 +37,7 @@ def get_events_for(symbols: list[str], days_ahead: int = 5) -> dict[str, list[di
     cutoff  = today + timedelta(days=days_ahead)
     result  = {}
 
-    with sqlite3.connect(DB_PATH) as conn:
+    with db() as conn:
         for sym in symbols:
             rows = conn.execute("""
                 SELECT ex_date, purpose FROM corporate_events

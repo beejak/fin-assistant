@@ -5,7 +5,7 @@ Large institutional trades are strong signals — fund conviction at scale.
 import sqlite3
 import logging
 from datetime import datetime
-from config import DB_PATH, IST
+from config import db, DB_PATH, IST
 from nse.client import bulk_deals as fetch_bulk, block_deals as fetch_block
 
 log = logging.getLogger(__name__)
@@ -30,7 +30,7 @@ def store_today() -> list[dict]:
             all_deals.append({**d, "source": source, "value_cr": round(value_cr, 1), "id": deal_id})
 
     if all_deals:
-        with sqlite3.connect(DB_PATH) as conn:
+        with db() as conn:
             for d in all_deals:
                 conn.execute("""
                     INSERT OR IGNORE INTO bulk_deals
@@ -48,7 +48,7 @@ def store_today() -> list[dict]:
 def get_today(date_str: str | None = None) -> list[dict]:
     if not date_str:
         date_str = datetime.now(IST).strftime("%Y-%m-%d")
-    with sqlite3.connect(DB_PATH) as conn:
+    with db() as conn:
         rows = conn.execute("""
             SELECT symbol, client_name, trade_type, quantity, price, date
             FROM bulk_deals WHERE date=?

@@ -27,7 +27,7 @@ from collections import defaultdict
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
-from config import IST, DB_PATH, BOT_TOKEN, OWNER_CHAT_ID
+from config import db, IST, DB_PATH, BOT_TOKEN, OWNER_CHAT_ID
 
 logging.basicConfig(
     level=logging.INFO,
@@ -167,7 +167,7 @@ def _load_known() -> set[str]:
 def _load_monitored() -> set[str]:
     """Load channel names already in monitored_channels DB."""
     try:
-        with sqlite3.connect(DB_PATH) as conn:
+        with db() as conn:
             rows = conn.execute("SELECT name FROM monitored_channels").fetchall()
         return {r[0].lower() for r in rows}
     except Exception:

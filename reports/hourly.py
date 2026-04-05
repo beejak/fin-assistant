@@ -15,7 +15,7 @@ import logging
 from datetime import datetime, timezone
 from collections import defaultdict
 
-from config import DB_PATH, IST, IGNORED_CHAT_IDS
+from config import db, DB_PATH, IST, IGNORED_CHAT_IDS
 from nse import client as nse
 from signals.extractor import extract, INDICES, NOISE, OPT_STRIKE_RE, base_symbol, is_index
 from signals import confluence as conf_mod
@@ -33,7 +33,7 @@ log = logging.getLogger(__name__)
 # -- DB helpers ---------------------------------------------------------------
 
 def db_init():
-    with sqlite3.connect(DB_PATH) as c:
+    with db() as c:
         c.execute("""
             CREATE TABLE IF NOT EXISTS signal_log (
                 id TEXT PRIMARY KEY, date TEXT NOT NULL, channel TEXT NOT NULL,
@@ -45,7 +45,7 @@ def db_init():
 
 
 def already_sent(channel, instrument, direction, date_str):
-    with sqlite3.connect(DB_PATH) as c:
+    with db() as c:
         return bool(c.execute(
             "SELECT 1 FROM signal_log WHERE date=? AND channel=? AND instrument=? AND direction=?",
             (date_str, channel, instrument, direction)
@@ -56,7 +56,7 @@ def log_signal(sig, date_str):
     import json
     sig_id = re.sub(r'[^a-zA-Z0-9_]', '_',
                     f"{date_str}_{sig['channel']}_{sig['instrument']}_{sig['direction']}")[:120]
-    with sqlite3.connect(DB_PATH) as c:
+    with db() as c:
         c.execute("""
             INSERT OR IGNORE INTO signal_log
               (id, date, channel, instrument, direction, entry, sl, targets, raw_text, sent_at)
@@ -77,7 +77,7 @@ def run(dry_run: bool = False) -> None:
     # -- 1. Read new messages -------------------------------------------------
     ignored_list = list(IGNORED_CHAT_IDS) or [""]
     ignored_placeholders = ",".join("?" * len(ignored_list))
-    with sqlite3.connect(DB_PATH) as conn:
+    with db() as conn:
         rows = conn.execute(f"""
             SELECT c.name, m.content, m.timestamp
             FROM messages m JOIN chats c ON m.chat_jid = c.jid

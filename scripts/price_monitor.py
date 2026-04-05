@@ -21,7 +21,7 @@ from pathlib import Path
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
-from config import DB_PATH, IST, BOT_TOKEN, OWNER_CHAT_ID, is_market_open
+from config import db, DB_PATH, IST, BOT_TOKEN, OWNER_CHAT_ID, is_market_open
 from nse import client as nse
 from signals.extractor import base_symbol, is_index
 
@@ -87,7 +87,7 @@ def check_signals(dry_run: bool = False) -> int:
     COLS = ["id", "channel", "instrument", "direction",
             "entry", "sl", "targets", "intraday_alerts"]
 
-    with sqlite3.connect(DB_PATH) as conn:
+    with db() as conn:
         _init_col(conn)
         rows = conn.execute("""
             SELECT id, channel, instrument, direction,
@@ -123,7 +123,7 @@ def check_signals(dry_run: bool = False) -> int:
 
     alerts_fired = 0
 
-    with sqlite3.connect(DB_PATH) as conn:
+    with db() as conn:
         _init_col(conn)
         for s in sigs:
             sym   = base_symbol(s["instrument"])
