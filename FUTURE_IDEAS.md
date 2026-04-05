@@ -97,6 +97,43 @@ significant testing and risk controls.
 
 ---
 
+---
+
+## Lessons Learned
+
+Operational mistakes made during development — recorded so they don't repeat.
+
+### 1. Stop cron before touching the Telegram session
+
+`healthcheck.py` runs every 15 minutes via cron and auto-restarts `fin-bridge`
+if it detects the service is down. If you stop `fin-bridge` without stopping
+cron first, the healthcheck will restart it within 15 minutes (or less), causing
+`database is locked` errors in any tool that tries to open the Pyrogram session.
+
+**Correct shutdown sequence when you need exclusive session access:**
+```bash
+systemctl stop cron                  # 1. stop healthcheck from restarting bridge
+systemctl stop fin-bridge            # 2. stop the service
+pkill -9 -f tg_bridge.py             # 3. kill any surviving process
+sleep 2                              # 4. let OS release file locks
+# ... do your work ...
+systemctl start fin-bridge           # 5. bring bridge back
+systemctl start cron                 # 6. restore healthcheck
+```
+
+### 2. `discover` resets channel filter on each run
+
+`bridge/discover.py` upserts every channel in your Telegram account back into
+`monitored_channels` with `active=1`. Running it after a cleanup pass re-adds
+all the junk you just removed.
+
+**Fix in place:** the `join_scout_channels.py` script does a targeted upsert
+for only the channels it just joined, rather than calling the full discover.
+If you ever run `python main.py discover` manually, re-run the trading channel
+filter script afterwards.
+
+---
+
 ## Not worth doing
 
 - WhatsApp group scraping: brittle, ToS violation, Telegram coverage is sufficient
