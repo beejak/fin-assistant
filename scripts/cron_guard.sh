@@ -84,10 +84,12 @@ Succeeded on attempt ${attempt}/${MAX_RETRIES} at $(date '+%H:%M IST')"
 done
 
 # -- All retries exhausted: schedule one final at-based attempt --
+# NOTE: the at-fallback runs the underlying command directly (NOT via cron_guard.sh)
+# to avoid infinite _fallback_fallback_... chaining when fallbacks also fail.
 AT_DELAY=10   # minutes
 echo "[cron_guard] job=${JOB} FAILED after ${MAX_RETRIES} attempts -- scheduling at-fallback in ${AT_DELAY}min"
 
-AT_CMD="cd ${REPO_DIR} && /usr/bin/bash scripts/cron_guard.sh ${JOB}_fallback $* >> logs/cron.log 2>&1"
+AT_CMD="cd ${REPO_DIR} && echo \"[at-fallback] job=${JOB} starting at \$(date '+%H:%M:%S')\" >> logs/cron.log 2>&1 && $* >> logs/cron.log 2>&1 && date -u '+%Y-%m-%dT%H:%M:%SZ' > ${HEARTBEAT_DIR}/${JOB}.last_ok || echo \"[at-fallback] job=${JOB} FAILED\" >> logs/cron.log 2>&1"
 echo "${AT_CMD}" | at "now + ${AT_DELAY} minutes" 2>/dev/null \
     && AT_MSG="Fallback attempt scheduled in ${AT_DELAY} min via at." \
     || AT_MSG="Could not schedule at-fallback (atd may be down)."
