@@ -46,6 +46,12 @@
 # Every 2 hours outside market hours (nights, weekends) — lower frequency is fine
 0 */2 * * * cd /root/fin-assistant && /usr/bin/python3 scripts/healthcheck.py >> logs/healthcheck.log 2>&1
 
+# -- NSE symbol list refresh --------------------------------------------------
+
+# Daily at 7:30 AM IST (2:00 AM UTC) — before pre-open briefing
+# Downloads EQUITY_L.csv from NSE archives, upserts into nse_symbols table
+0 2 * * 1-5 cd /root/fin-assistant && /usr/bin/python3 scripts/refresh_nse_symbols.py >> logs/nse_symbols.log 2>&1
+
 # -- Channel scout ------------------------------------------------------------
 
 # Daily at 7:00 PM IST (13:30 UTC) — after market close, scrapes public forums

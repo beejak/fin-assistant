@@ -109,6 +109,17 @@ CREATE TABLE IF NOT EXISTS corporate_events (
 
 CREATE INDEX IF NOT EXISTS idx_corp_date ON corporate_events(ex_date);
 
+-- ── NSE symbol list (refreshed daily by scripts/refresh_nse_symbols.py) ──────
+
+CREATE TABLE IF NOT EXISTS nse_symbols (
+    symbol     TEXT PRIMARY KEY,
+    name       TEXT,
+    isin       TEXT,
+    series     TEXT,
+    type       TEXT DEFAULT 'equity',   -- equity | index
+    updated_at TEXT
+);
+
 -- ── Learning loop ──────────────────────────────────────────────────────────
 
 -- Rolling 30-day hit rate per channel (updated each EOD)
