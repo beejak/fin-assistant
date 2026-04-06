@@ -66,7 +66,7 @@ last_exit=0
 
 while [[ $attempt -lt $MAX_RETRIES ]]; do
     attempt=$(( attempt + 1 ))
-    echo "[cron_guard] job=${JOB} attempt=${attempt}/${MAX_RETRIES} at $(date '+%H:%M:%S')"
+    echo "[cron_guard] job=${JOB} attempt=${attempt}/${MAX_RETRIES} at $(TZ=Asia/Kolkata date '+%H:%M:%S IST')"
 
     "$@"
     last_exit=$?
@@ -78,7 +78,7 @@ while [[ $attempt -lt $MAX_RETRIES ]]; do
         if [[ $attempt -gt 1 ]]; then
             echo "[cron_guard] job=${JOB} recovered on attempt ${attempt}"
             send_telegram "[OK] <b>Cron recovered: ${JOB}</b>
-Succeeded on attempt ${attempt}/${MAX_RETRIES} at $(date '+%H:%M IST')"
+Succeeded on attempt ${attempt}/${MAX_RETRIES} at $(TZ=Asia/Kolkata date '+%H:%M IST')"
         else
             echo "[cron_guard] job=${JOB} OK"
         fi
@@ -100,14 +100,14 @@ done
 AT_DELAY=10   # minutes
 echo "[cron_guard] job=${JOB} FAILED after ${MAX_RETRIES} attempts -- scheduling at-fallback in ${AT_DELAY}min"
 
-AT_CMD="cd ${REPO_DIR} && echo \"[at-fallback] job=${JOB} starting at \$(date '+%H:%M:%S')\" >> logs/cron.log 2>&1 && $* >> logs/cron.log 2>&1 && date -u '+%Y-%m-%dT%H:%M:%SZ' > ${HEARTBEAT_DIR}/${JOB}.last_ok || echo \"[at-fallback] job=${JOB} FAILED\" >> logs/cron.log 2>&1"
+AT_CMD="cd ${REPO_DIR} && echo \"[at-fallback] job=${JOB} starting at \$(TZ=Asia/Kolkata date '+%H:%M:%S IST')\" >> logs/cron.log 2>&1 && $* >> logs/cron.log 2>&1 && date -u '+%Y-%m-%dT%H:%M:%SZ' > ${HEARTBEAT_DIR}/${JOB}.last_ok || echo \"[at-fallback] job=${JOB} FAILED\" >> logs/cron.log 2>&1"
 echo "${AT_CMD}" | at "now + ${AT_DELAY} minutes" 2>/dev/null \
     && AT_MSG="Fallback attempt scheduled in ${AT_DELAY} min via at." \
     || AT_MSG="Could not schedule at-fallback (atd may be down)."
 
 send_telegram "[FAIL] <b>Cron job failed: ${JOB}</b>
 All ${MAX_RETRIES} attempts failed. Exit code: ${last_exit}
-Time: $(date '+%Y-%m-%d %H:%M IST')
+Time: $(TZ=Asia/Kolkata date '+%Y-%m-%d %H:%M IST')
 ${AT_MSG}
 
 <pre>$(tail_log)</pre>
