@@ -118,6 +118,18 @@ def run_cron_guard(job: str, cmd_args: list, extra_env: dict = None, fake_sleep:
 def cleanup_heartbeat(job: str):
     hb = ROOT / "logs" / "heartbeats" / f"{job}.last_ok"
     hb.unlink(missing_ok=True)
+    # Remove any pending at-jobs whose command references this test job name
+    # so stress test failures don't leave ghost at-jobs firing 10 min later
+    try:
+        import subprocess as _sp
+        q = _sp.run(["atq"], capture_output=True, text=True)
+        for line in q.stdout.splitlines():
+            job_id = line.split()[0]
+            detail = _sp.run(["at", "-c", job_id], capture_output=True, text=True)
+            if f"job={job}" in detail.stdout:
+                _sp.run(["atrm", job_id], capture_output=True)
+    except Exception:
+        pass
 
 
 def load_scheduler():
