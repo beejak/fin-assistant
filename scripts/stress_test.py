@@ -566,17 +566,38 @@ def test_E4():
     assert not result, "Empty heartbeat should return 1"
 
 def test_E5():
-    """watchdog.sh exits cleanly on weekends (today IS Saturday)."""
-    env = os.environ.copy()
-    env.setdefault("BOT_TOKEN", "")
-    env.setdefault("OWNER_CHAT_ID", "")
-    r = subprocess.run(
-        ["bash", str(ROOT / "scripts" / "watchdog.sh")],
-        capture_output=True, text=True, env=env, cwd=str(ROOT)
+    """watchdog.sh weekend detection: inject a Saturday date via TZ trick."""
+    # Simulate Saturday by patching the 'date' command using a wrapper script
+    fake_date = ROOT / "logs" / "heartbeats" / "_fake_date.sh"
+    fake_date.parent.mkdir(parents=True, exist_ok=True)
+    # Returns weekday=6 (Saturday) for %u, and a Saturday date for %Y-%m-%d
+    fake_date.write_text(
+        "#!/usr/bin/env bash\n"
+        "if [[ \"$*\" == *'%u'* ]]; then echo 6; exit 0; fi\n"
+        "exec /usr/bin/date \"$@\"\n"
     )
-    out = r.stdout + r.stderr
-    assert r.returncode == 0, f"Expected exit 0, got {r.returncode}"
-    assert "Weekend" in out or "holiday" in out.lower(), f"Expected skip message:\n{out}"
+    fake_date.chmod(0o755)
+    try:
+        env = os.environ.copy()
+        env["PATH"] = str(fake_date.parent) + ":" + env.get("PATH", "")
+        env.setdefault("BOT_TOKEN", "")
+        env.setdefault("OWNER_CHAT_ID", "")
+        # Copy fake_date as 'date' in a temp bin dir on PATH
+        import shutil, tempfile
+        tmpbin = Path(tempfile.mkdtemp())
+        shutil.copy(str(fake_date), str(tmpbin / "date"))
+        env["PATH"] = str(tmpbin) + ":" + env.get("PATH", "")
+        r = subprocess.run(
+            ["bash", str(ROOT / "scripts" / "watchdog.sh")],
+            capture_output=True, text=True, env=env, cwd=str(ROOT)
+        )
+        out = r.stdout + r.stderr
+        assert r.returncode == 0, f"Expected exit 0, got {r.returncode}\n{out}"
+        assert "Weekend" in out or "weekend" in out.lower(), \
+            f"Expected 'Weekend' skip message:\n{out}"
+    finally:
+        fake_date.unlink(missing_ok=True)
+        shutil.rmtree(str(tmpbin), ignore_errors=True)
 
 def test_E6():
     """watchdog.sh holiday detection: Good Friday string matches holiday list."""
