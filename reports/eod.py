@@ -102,7 +102,7 @@ def run(dry_run: bool = False) -> None:
     }
     quotes = {}
     for sym in sorted(stock_syms):
-        time.sleep(0.3)
+        time.sleep(0.5)   # NSE recommends ≥0.5s between requests
         q = nse.quote(sym)
         if q and q.get("ltp"):
             quotes[sym] = q

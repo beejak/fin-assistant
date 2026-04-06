@@ -9,8 +9,14 @@
 # Pre-open briefing at 8:45 AM IST (3:15 AM UTC)
 15 3 * * 1-5 cd /root/fin-assistant && /usr/bin/bash scripts/cron_guard.sh preopen /usr/bin/python3 main.py preopen >> logs/cron.log 2>&1
 
-# Hourly signal scans: 9:45, 10:45, 11:45, 12:45, 13:45, 14:45, 15:15 IST
-45 3,4,5,6,7,8,9 * * 1-5 cd /root/fin-assistant && /usr/bin/bash scripts/cron_guard.sh hourly /usr/bin/python3 main.py hourly >> logs/cron.log 2>&1
+# Hourly index scans: 9:45, 10:45 ... 15:15 IST  (3:15-9:15 UTC)
+45 3,4,5,6,7,8,9 * * 1-5 cd /root/fin-assistant && /usr/bin/bash scripts/cron_guard.sh hourly_indices /usr/bin/python3 main.py hourly >> logs/cron.log 2>&1
+
+# Hourly stocks scans: 9:50, 10:50 ... 15:20 IST  (5 min after indices)
+50 3,4,5,6,7,8,9 * * 1-5 cd /root/fin-assistant && /usr/bin/bash scripts/cron_guard.sh hourly_stocks /usr/bin/python3 main.py hourly --mode stocks >> logs/cron_stocks.log 2>&1
+
+# Hourly futures scans: 9:55, 10:55 ... 15:25 IST  (10 min after indices)
+55 3,4,5,6,7,8,9 * * 1-5 cd /root/fin-assistant && /usr/bin/bash scripts/cron_guard.sh hourly_futures /usr/bin/python3 main.py hourly --mode futures >> logs/cron_futures.log 2>&1
 
 # EOD grader at 3:45 PM IST (10:15 AM UTC)
 15 10 * * 1-5 cd /root/fin-assistant && /usr/bin/bash scripts/cron_guard.sh eod /usr/bin/python3 main.py eod >> logs/cron.log 2>&1

@@ -14,7 +14,9 @@ Usage:
   python main.py fetch [days] [lim]  Backfill N days of history (default 3)
 
   python main.py preopen             8:45 AM pre-open briefing
-  python main.py hourly              Hourly signal scan (run via cron)
+  python main.py hourly              Hourly index signal scan (run via cron)
+  python main.py hourly --mode stocks    Hourly stocks signal scan
+  python main.py hourly --mode futures   Hourly futures signal scan
   python main.py eod                 EOD grader + FII/DII + deals
   python main.py weekly              Monday scorecard
 
@@ -92,7 +94,13 @@ if __name__ == "__main__":
         from reports.preopen import run; run(dry_run=dry_run)
 
     elif mode == "hourly":
-        from reports.hourly import run; run(dry_run=dry_run)
+        scan_mode = "indices"
+        for a in args[1:]:
+            if a.startswith("--mode="):
+                scan_mode = a.split("=", 1)[1]
+            elif a == "--mode" and args.index(a) + 1 < len(args):
+                scan_mode = args[args.index(a) + 1]
+        from reports.hourly import run; run(dry_run=dry_run, mode=scan_mode)
 
     elif mode == "eod":
         from reports.eod import run; run(dry_run=dry_run)

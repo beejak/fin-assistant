@@ -17,7 +17,7 @@ from collections import defaultdict
 
 from config import db, DB_PATH, IST, IGNORED_CHAT_IDS
 from nse import client as nse
-from signals.extractor import extract, INDICES, NOISE, OPT_STRIKE_RE, base_symbol, is_index
+from signals.extractor import extract, INDICES, NOISE, OPT_STRIKE_RE, base_symbol, is_index, is_future
 from signals import confluence as conf_mod
 from signals import ta as ta_mod
 from enrichers import oi_velocity as oi_mod
@@ -69,7 +69,11 @@ def log_signal(sig, date_str):
 
 # -- Main ---------------------------------------------------------------------
 
-def run(dry_run: bool = False) -> None:
+def run(dry_run: bool = False, mode: str = "indices") -> None:
+    """
+    mode: 'indices' | 'stocks' | 'futures'
+    Each mode runs as a separate cron job so they don't block each other.
+    """
     now      = datetime.now(IST)
     date_str = now.strftime("%Y-%m-%d")
     db_init()
@@ -92,7 +96,7 @@ def run(dry_run: bool = False) -> None:
     new_sigs   = []
     by_channel = defaultdict(list)
     for name, text, ts in rows:
-        sig = extract(text)
+        sig = extract(text, mode=mode)
         if not sig: continue
         if already_sent(name, sig["instrument"], sig["direction"], date_str): continue
         sig.update({"channel": name, "ts": ts, "text": text})
@@ -120,28 +124,29 @@ def run(dry_run: bool = False) -> None:
     except Exception as e:
         log.warning("OI snapshot: %s", e)
 
-    # NSE quotes for mentioned stocks
-    stock_syms = {
+    # NSE quotes for mentioned symbols
+    # Cap: indices=8, stocks=5, futures=5 — keeps each mode run under 2 min
+    quote_cap = 8 if mode == "indices" else 5
+    syms_needing_quote = {
         base_symbol(s["instrument"]) for s in new_sigs
         if not is_index(s["instrument"])
-        and base_symbol(s["instrument"]) not in NOISE
-        and not OPT_STRIKE_RE.match(base_symbol(s["instrument"]))
         and not base_symbol(s["instrument"])[0].isdigit()
     }
     quotes = {}
-    for sym in sorted(stock_syms):
-        time.sleep(0.3)
+    for sym in sorted(syms_needing_quote)[:quote_cap]:
+        time.sleep(0.5)   # NSE recommends ≥0.5s between requests
         q = nse.quote(sym)
         if q and q.get("ltp"):
             quotes[sym] = q
 
-    # TA enrichment for stock signals
+    # TA enrichment — indices and stocks only, skip for futures (less relevant)
     ta_cache = {}
-    for sym in list(quotes.keys())[:8]:  # cap at 8 to avoid slow runs
-        try:
-            ta_cache[sym] = ta_mod.enrich(sym, ltp=quotes[sym].get("ltp"))
-        except Exception as e:
-            log.warning("TA %s: %s", sym, e)
+    if mode != "futures":
+        for sym in list(quotes.keys())[:5]:
+            try:
+                ta_cache[sym] = ta_mod.enrich(sym, ltp=quotes[sym].get("ltp"))
+            except Exception as e:
+                log.warning("TA %s: %s", sym, e)
 
     # Confluence + bias check
     confluences = conf_mod.get_confluences(date_str, min_channels=2)
@@ -167,7 +172,8 @@ def run(dry_run: bool = False) -> None:
 
     # -- 6. Format ------------------------------------------------------------
     L = []
-    L.append(f"[LIVE] <b>SIGNAL SCAN  {now.strftime('%H:%M IST')}</b>  ({len(new_sigs)} new)")
+    mode_label = {"indices": "INDEX", "stocks": "STOCKS", "futures": "FUTURES"}.get(mode, mode.upper())
+    L.append(f"[LIVE] <b>{mode_label} SIGNAL SCAN  {now.strftime('%H:%M IST')}</b>  ({len(new_sigs)} new)")
 
     # Compact index bar
     def idx_bar(label, d, oc=None):
