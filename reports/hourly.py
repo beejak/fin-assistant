@@ -143,8 +143,9 @@ def run(dry_run: bool = False) -> None:
         except Exception as e:
             log.warning("TA %s: %s", sym, e)
 
-    # Confluence check
+    # Confluence + bias check
     confluences = conf_mod.get_confluences(date_str, min_channels=2)
+    biases      = conf_mod.net_bias(date_str)
 
     # Corporate events for mentioned stocks
     all_stock_syms = list(stock_syms)
@@ -200,6 +201,12 @@ def run(dry_run: bool = False) -> None:
     # Confluence alert (fire first if present)
     if confluences:
         L.append(conf_mod.format_confluence_alert(confluences))
+        L.append("")
+
+    # Net bias (STRONG consensus or SPLIT disagreement)
+    bias_text = conf_mod.format_bias_block(biases)
+    if bias_text:
+        L.append(bias_text)
         L.append("")
 
     # OI velocity

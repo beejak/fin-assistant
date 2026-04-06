@@ -20,6 +20,14 @@ Usage:
 
   python main.py oi-snapshot         Manual OI snapshot
 
+  python main.py backtest            P&L analysis on historical signal_log
+    --days N                         Look back N days (default 30)
+    --channel NAME                   Filter to one channel
+    --direction BUY|SELL             Filter by direction
+    --instrument NIFTY               Filter by index (partial match)
+    --min-confidence HIGH|MED|LOW    Only include channels at this score+
+    --send                           Send report to Telegram
+
   Add --dry-run to any report command to print instead of sending to Telegram.
 """
 import sys
@@ -94,6 +102,14 @@ if __name__ == "__main__":
 
     elif mode == "oi-snapshot":
         from enrichers.oi_velocity import snapshot; snapshot()
+
+    elif mode == "backtest":
+        import subprocess
+        subprocess.run(
+            [sys.executable, "scripts/backtest.py"] + args[1:] +
+            (["--send"] if not dry_run and "--send" in sys.argv else []),
+            check=False
+        )
 
     else:
         usage()
