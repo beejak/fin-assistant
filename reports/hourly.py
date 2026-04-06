@@ -153,7 +153,7 @@ def run(dry_run: bool = False, mode: str = "indices") -> None:
     biases      = conf_mod.net_bias(date_str)
 
     # Corporate events for mentioned stocks
-    all_stock_syms = list(stock_syms)
+    all_stock_syms = list(syms_needing_quote)
     events_map = events_mod.get_events_for(all_stock_syms, days_ahead=5) if all_stock_syms else {}
 
     # -- 4. Macro events due today --------------------------------------------
