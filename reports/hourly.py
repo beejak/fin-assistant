@@ -284,8 +284,9 @@ def run(dry_run: bool = False, mode: str = "indices") -> None:
         L.append("")
 
     # Log & send
-    for s in new_sigs:
-        log_signal(s, date_str)
+    if not dry_run:
+        for s in new_sigs:
+            log_signal(s, date_str)
 
     send("\n".join(L), dry_run=dry_run)
     log.info("Hourly scan sent")
