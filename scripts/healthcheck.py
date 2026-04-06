@@ -22,7 +22,7 @@ import logging
 import subprocess
 import time
 import argparse
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 # Allow running from any directory
@@ -198,7 +198,8 @@ def check_bridge_freshness() -> Check:
         c.ok("market closed -- skipped")
         return c
     try:
-        threshold = (datetime.now(IST) - timedelta(hours=BRIDGE_STALE_HOURS)).isoformat()
+        # DB timestamps are stored in UTC — compute threshold in UTC for correct string comparison
+        threshold = (datetime.now(timezone.utc) - timedelta(hours=BRIDGE_STALE_HOURS)).isoformat()
         with db(timeout=15) as conn:
             row = conn.execute(
                 "SELECT MAX(timestamp) FROM messages"
