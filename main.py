@@ -22,6 +22,8 @@ Usage:
 
   python main.py oi-snapshot         Manual OI snapshot
 
+  python main.py listen              Start Telegram query listener (bot responds to your messages)
+
   python main.py backtest            P&L analysis on historical signal_log
     --days N                         Look back N days (default 30)
     --channel NAME                   Filter to one channel
@@ -110,6 +112,9 @@ if __name__ == "__main__":
 
     elif mode == "oi-snapshot":
         from enrichers.oi_velocity import snapshot; snapshot()
+
+    elif mode == "listen":
+        from bot_listen import run; run()
 
     elif mode == "backtest":
         import subprocess

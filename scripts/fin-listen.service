@@ -1,0 +1,17 @@
+[Unit]
+Description=nanoclaw Telegram query listener
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/fin-assistant
+ExecStart=/usr/bin/python3 main.py listen
+Restart=on-failure
+RestartSec=10
+StandardOutput=append:/root/fin-assistant/logs/listener.log
+StandardError=append:/root/fin-assistant/logs/listener.log
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
