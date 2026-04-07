@@ -187,8 +187,12 @@ def run(dry_run: bool = False, mode: str = "indices") -> None:
         L.append("  ".join(parts))
 
     if vix:
-        vem = "[!!!]" if vix > 20 else ("[!!]" if vix > 15 else "")
-        L.append(f"{vem} VIX {vix:.1f}" + ("  ← elevated, expect whipsaws" if vix > 20 else ""))
+        if vix > 20:
+            L.append(f"<b>VIX {vix:.1f} — ELEVATED</b>  ← expect whipsaws")
+        elif vix > 15:
+            L.append(f"VIX {vix:.1f} — watch volatility")
+        else:
+            L.append(f"VIX {vix:.1f}")
 
     if oc_n:
         bias_em = {"BULLISH": "BULL bias", "BEARISH": "BEAR bias", "NEUTRAL": "NEUTRAL"}.get(oc_n["bias"], "")
@@ -271,14 +275,28 @@ def run(dry_run: bool = False, mode: str = "indices") -> None:
 
     digest = sorted(digest_map.values(), key=lambda x: x["rank"])
     if digest:
-        L.append("<b>[DIGEST] Top actionable signals</b>")
+        L.append("<b>── WATCHLIST  top actionable signals ──</b>")
         for item in digest[:5]:
             s    = item["s"]
-            em   = "[+]" if s["direction"] == "BUY" else "[-]"
+            em   = "▲" if s["direction"] == "BUY" else "▼"
             tgt  = "/".join(str(t) for t in s["targets"]) if s.get("targets") else ""
             chs  = item["channels"]
             line = f"  {em} <b>{s['instrument']}</b>  @ {s['entry']}  SL {s['sl']}"
-            if tgt: line += f"  TGT {tgt}"
+            if tgt:
+                line += f"  TGT {tgt}"
+                # R:R ratio
+                if s.get("entry") and s.get("sl") and s.get("targets"):
+                    risk = abs(s["entry"] - s["sl"])
+                    if risk > 0:
+                        reward = abs(s["targets"][0] - s["entry"])
+                        line += f"  <i>R:R {reward/risk:.1f}</i>"
+            # Stale signal check
+            try:
+                ts_s = datetime.fromisoformat(s["ts"]).replace(tzinfo=timezone.utc).astimezone(IST)
+                if (now - ts_s).total_seconds() / 3600 > 2:
+                    line += "  <i>STALE</i>"
+            except Exception:
+                pass
             if len(chs) > 1:
                 line += f"  — {len(chs)} channels"
             else:
@@ -303,7 +321,7 @@ def run(dry_run: bool = False, mode: str = "indices") -> None:
         if not digest_sigs and ch_conf not in ("HIGH", "MED"):
             # Low-confidence channel with no digest signals — one-liner only
             instruments = ", ".join(
-                f"{'[+]' if s['direction']=='BUY' else ('[-]' if s['direction']=='SELL' else '[=]')} {s['instrument']}"
+                f"{'▲' if s['direction']=='BUY' else ('▼' if s['direction']=='SELL' else '—')} {s['instrument']}"
                 for s in sigs
             )
             badge_str = f"  <i>{score_badge}</i>" if score_badge else ""
@@ -318,14 +336,15 @@ def run(dry_run: bool = False, mode: str = "indices") -> None:
         for s in digest_sigs + other_sigs:
             ts_ist = (datetime.fromisoformat(s["ts"])
                       .replace(tzinfo=timezone.utc).astimezone(IST))
-            em = "[+]" if s["direction"] == "BUY" else ("[-]" if s["direction"] == "SELL" else "[=]")
+            em    = "▲" if s["direction"] == "BUY" else ("▼" if s["direction"] == "SELL" else "—")
+            stale = "  <i>STALE</i>" if (now - ts_ist).total_seconds() / 3600 > 2 else ""
 
             parts = [f"{em} <b>{s['instrument']}</b>"]
             if s.get("entry"):   parts.append(f"@ {s['entry']}")
             if s.get("sl"):      parts.append(f"SL {s['sl']}")
             if s.get("targets"): parts.append("TGT " + "/".join(str(t) for t in s["targets"]))
             parts.append(f"[{ts_ist.strftime('%H:%M')}]")
-            L.append("  " + "  ".join(parts))
+            L.append("  " + "  ".join(parts) + stale)
 
             # Only show enrichment for digest signals
             if s["instrument"] not in digest_instruments:
@@ -336,20 +355,20 @@ def run(dry_run: bool = False, mode: str = "indices") -> None:
             if sym in quotes:
                 q    = quotes[sym]
                 pct  = q.get("pct") or 0
-                arr  = "^" if pct >= 0 else "v"
+                arr  = "▲" if pct >= 0 else "▼"
                 nline = f"  └ NSE {q['ltp']}  {arr}{abs(pct):.1f}%"
                 if s.get("entry") and q.get("ltp") and not is_option(s["instrument"]):
                     diff = (q["ltp"] - s["entry"]) / s["entry"] * 100
                     if abs(diff) > 3:
-                        nline += f"  [WARN] entry {s['entry']} ({abs(diff):.0f}% away)"
+                        nline += f"  ← entry {s['entry']} ({abs(diff):.0f}% away)"
                     elif s["direction"] == "BUY" and q["ltp"] >= s["entry"]:
-                        nline += "  [OK]"
+                        nline += "  ✓ setup valid"
                     elif s["direction"] == "SELL" and q["ltp"] <= s["entry"]:
-                        nline += "  [OK]"
+                        nline += "  ✓ setup valid"
                 if s.get("sl") and q.get("ltp"):
                     if (s["direction"] == "BUY" and q["ltp"] < s["sl"]) or \
                        (s["direction"] == "SELL" and q["ltp"] > s["sl"]):
-                        nline += "  [ALERT] SL HIT"
+                        nline += "  ✗ SL breached"
                 L.append(nline)
             elif sym == "NIFTY" and nifty.get("last"):
                 L.append(f"  └ NIFTY {nifty['last']:,.0f}  ({nifty.get('percentChange',0):+.2f}%)")
@@ -371,6 +390,21 @@ def run(dry_run: bool = False, mode: str = "indices") -> None:
                 L.append(events_mod.format_event_flag(sym, events_map[sym]))
 
         L.append("")
+
+    # Channel leaderboard — only when we have graded data
+    channels_ranked = sorted(
+        [(ch, s) for ch, s in scores.items() if s.get("hit_rate") is not None],
+        key=lambda x: x[1]["hit_rate"] or 0, reverse=True
+    )
+    if channels_ranked:
+        rows_lb = [f"{'Channel':<26} {'Sig':>4}  {'Hit%':>5}  Conf"]
+        rows_lb.append("─" * 44)
+        for ch, sc in channels_ranked[:8]:
+            flag = " ←" if sc.get("suggest_mute") else ""
+            rows_lb.append(
+                f"{ch[:24]:<26} {sc['total']:>4}  {sc['hit_rate']:>4.0f}%  {sc['confidence']}{flag}"
+            )
+        L.append(f"<pre>{chr(10).join(rows_lb)}</pre>")
 
     # Log & send
     if not dry_run:
