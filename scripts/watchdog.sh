@@ -114,6 +114,50 @@ fi
 ACTIONS=()
 FAILURES=()
 
+# ── Bridge self-heal (laptop sleep / WSL2 network drop) ───────────────────────
+# During market hours, if the last DB message is >90 min old the bridge has
+# likely gone dead after a sleep/wake cycle.  Fix: stop → fetch backfill →
+# restart → fire scanner immediately so we don't wait for the next cron slot.
+BRIDGE_STALE_MINS=90
+if [[ $IST_TIME -ge 555 && $IST_TIME -le 930 ]]; then   # 09:15–15:30 IST
+    LAST_MSG_AGO=$(${PYTHON} -c "
+import sqlite3, sys
+sys.path.insert(0, '${REPO_DIR}')
+from config import DB_PATH
+from datetime import datetime, timezone
+try:
+    conn = sqlite3.connect(DB_PATH, timeout=5)
+    row  = conn.execute('SELECT MAX(timestamp) FROM messages').fetchone()
+    conn.close()
+    if not row or not row[0]:
+        print(9999)
+    else:
+        last = datetime.fromisoformat(row[0].replace('Z','+00:00'))
+        if last.tzinfo is None:
+            last = last.replace(tzinfo=timezone.utc)
+        diff = (datetime.now(timezone.utc) - last).total_seconds() / 60
+        print(int(diff))
+except Exception as e:
+    print(9999)
+" 2>/dev/null || echo 9999)
+
+    if [[ "${LAST_MSG_AGO}" -ge "${BRIDGE_STALE_MINS}" ]]; then
+        log "Bridge stale for ${LAST_MSG_AGO} min — self-healing (stop → fetch → restart → scan)"
+        systemctl stop fin-bridge 2>/dev/null || true
+        sleep 3
+        ${PYTHON} bridge/fetch.py 3 500 >> "${REPO_DIR}/logs/bridge_fetch.log" 2>&1 \
+            && log "Fetch OK" || log "Fetch failed (continuing)"
+        systemctl start fin-bridge 2>/dev/null || true
+        sleep 5
+        # Fire all three scanner modes to catch up on missed signals
+        ${PYTHON} main.py hourly            >> "${REPO_DIR}/logs/cron.log"         2>&1 &
+        ${PYTHON} main.py hourly --mode stocks   >> "${REPO_DIR}/logs/cron_stocks.log"  2>&1 &
+        ${PYTHON} main.py hourly --mode futures  >> "${REPO_DIR}/logs/cron_futures.log" 2>&1 &
+        wait
+        ACTIONS+=("bridge self-heal: fetched after ${LAST_MSG_AGO} min gap")
+    fi
+fi
+
 # ── preopen: should run at 8:45 AM IST ───────────────────────────────────────
 # Check after 9:00 AM (540 min)
 if [[ $IST_TIME -ge 540 ]] && ! ran_today "preopen"; then
