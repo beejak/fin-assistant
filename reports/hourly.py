@@ -17,7 +17,7 @@ from collections import defaultdict
 
 from config import db, DB_PATH, IST, IGNORED_CHAT_IDS
 from nse import client as nse
-from signals.extractor import extract, INDICES, NOISE, OPT_STRIKE_RE, base_symbol, is_index, is_future
+from signals.extractor import extract, INDICES, NOISE, OPT_STRIKE_RE, base_symbol, is_index, is_future, is_option
 from signals import confluence as conf_mod
 from signals import ta as ta_mod
 from enrichers import oi_velocity as oi_mod
@@ -110,12 +110,13 @@ def run(dry_run: bool = False, mode: str = "indices") -> None:
 
     # -- 3. NSE data ----------------------------------------------------------
     nse.init()
-    idx   = nse.all_indices()
-    nifty = idx.get("NIFTY 50", {})
-    bnf   = idx.get("NIFTY BANK", {})
-    oc_n  = nse.option_chain("NIFTY")
-    oc_b  = nse.option_chain("BANKNIFTY")
-    vix   = nse.india_vix()
+    idx    = nse.all_indices()
+    nifty  = idx.get("NIFTY 50", {})
+    bnf    = idx.get("NIFTY BANK", {})
+    sensex = nse.sensex()
+    oc_n   = nse.option_chain("NIFTY")
+    oc_b   = nse.option_chain("BANKNIFTY")
+    vix    = nse.india_vix()
 
     # OI velocity (compare to last snapshot, then store new snapshot)
     oi_alerts = oi_mod.velocity_alerts()
@@ -173,43 +174,63 @@ def run(dry_run: bool = False, mode: str = "indices") -> None:
     # -- 6. Format ------------------------------------------------------------
     L = []
     mode_label = {"indices": "INDEX", "stocks": "STOCKS", "futures": "FUTURES"}.get(mode, mode.upper())
-    L.append(f"[LIVE] <b>{mode_label} SIGNAL SCAN  {now.strftime('%H:%M IST')}</b>  ({len(new_sigs)} new)")
+    L.append(f"[LIVE] <b>{mode_label} SCAN  {now.strftime('%H:%M IST')}</b>  ({len(new_sigs)} new)")
 
-    # Compact index bar
-    def idx_bar(label, d, oc=None):
-        if not d or not d.get("last"): return
+    # Compact index bar — single line
+    parts = []
+    for label, d in [("NIFTY", nifty), ("BNIFTY", bnf), ("SENSEX", sensex)]:
+        if not d or not d.get("last"): continue
         pct = d.get("percentChange", 0) or 0
-        em  = "[+]" if pct >= 0 else "[-]"
-        line = f"{em} <b>{label}</b> {d['last']:,.0f} ({pct:+.2f}%)"
-        if oc:
-            bias_em = {"BULLISH": "BULL", "BEARISH": "BEAR", "NEUTRAL": "NEU"}.get(oc["bias"], "")
-            line += f"  PCR {oc['pcr']}{bias_em}  R:{oc['max_ce']}  S:{oc['max_pe']}"
-        L.append(line)
+        em  = "+" if pct >= 0 else ""
+        parts.append(f"<b>{label}</b> {d['last']:,.0f} ({em}{pct:.1f}%)")
+    if parts:
+        L.append("  ".join(parts))
 
-    idx_bar("NIFTY", nifty, oc_n)
-    idx_bar("BANKNIFTY", bnf, oc_b)
     if vix:
-        vem = "[!!!]" if vix > 20 else ("[!!]" if vix > 15 else "[.]")
-        L.append(f"{vem} VIX {vix:.2f}")
+        vem = "[!!!]" if vix > 20 else ("[!!]" if vix > 15 else "")
+        L.append(f"{vem} VIX {vix:.1f}" + ("  ← elevated, expect whipsaws" if vix > 20 else ""))
 
-    # Market regime context (from yesterday's EOD snapshot)
-    regime_line = regime_mod.format_regime_line(regime)
-    if regime_line:
-        L.append(regime_line)
+    if oc_n:
+        bias_em = {"BULLISH": "BULL bias", "BEARISH": "BEAR bias", "NEUTRAL": "NEUTRAL"}.get(oc_n["bias"], "")
+        L.append(f"NIFTY OC: PCR {oc_n['pcr']}  {bias_em}  R {oc_n['max_ce']}  S {oc_n['max_pe']}")
 
-    # Macro events firing today
+    # TL;DR — one-line verdict
+    strong_biases  = [b for b in biases if b["bias"] in ("STRONG_BUY", "STRONG_SELL")]
+    split_biases   = [b for b in biases if b["bias"] == "SPLIT"]
+    digest_count   = 0   # filled in later, placeholder
+    if strong_biases:
+        sb = strong_biases[0]
+        verdict = f"STRONG {'BUY' if sb['bias']=='STRONG_BUY' else 'SELL'} on {sb['instrument']} ({sb['total']} channels agree)"
+    elif split_biases:
+        sb = split_biases[0]
+        verdict = f"SPLIT on {sb['instrument']} ({sb['buys']} BUY vs {sb['sells']} SELL) — no clear edge, be selective"
+    elif new_sigs:
+        verdict = f"{len(new_sigs)} new signals, no strong consensus"
+    else:
+        verdict = "No new signals"
+    L.append(f"\n<b>Verdict:</b> {verdict}")
+
+    # Macro events
     macro_text = format_macro_events(macro_today)
     if macro_text:
         L.append(macro_text)
 
     L.append("")
 
-    # Confluence alert (fire first if present)
-    if confluences:
-        L.append(conf_mod.format_confluence_alert(confluences))
+    # Confluence — only show if ALL channels are HIGH/MED confidence
+    strong_conf = [c for c in confluences
+                   if all((scores.get(ch) or {}).get("confidence", "UNKNOWN") in ("HIGH", "MED")
+                          for ch in c["channels"])]
+    if strong_conf:
+        L.append(conf_mod.format_confluence_alert(strong_conf))
+        L.append("")
+    elif confluences:
+        # Weaker confluences — show count only, don't clutter
+        instr_list = ", ".join(c["instrument"] for c in confluences[:3])
+        L.append(f"[~] Confluence (low-confidence channels): {instr_list}")
         L.append("")
 
-    # Net bias (STRONG consensus or SPLIT disagreement)
+    # Net bias block (STRONG or SPLIT only)
     bias_text = conf_mod.format_bias_block(biases)
     if bias_text:
         L.append(bias_text)
@@ -221,14 +242,80 @@ def run(dry_run: bool = False, mode: str = "indices") -> None:
         L.append(oi_text)
         L.append("")
 
+    # Digest — top actionable signals (entry + SL + direction, ranked by confidence)
+    # For bare index spot signals, skip entries that look like option premiums (e.g. NIFTY @ 65)
+    def _is_credible_entry(sig: dict) -> bool:
+        if not sig.get("entry") or not sig.get("sl") or not sig.get("direction"):
+            return False
+        if not is_option(sig["instrument"]) and base_symbol(sig["instrument"]) in INDICES:
+            if sig["entry"] < 1000:
+                return False
+        return True
+
+    conf_instruments = {c["instrument"] for c in confluences}
+    # Deduplicate by instrument — merge channels calling the same thing
+    digest_map: dict = {}
+    for s in new_sigs:
+        if not _is_credible_entry(s):
+            continue
+        ch_conf = (scores.get(s["channel"]) or {}).get("confidence", "UNKNOWN")
+        in_conf = s["instrument"] in conf_instruments
+        if ch_conf not in ("HIGH", "MED") and not in_conf:
+            continue
+        key = s["instrument"]
+        if key not in digest_map:
+            digest_map[key] = {"s": s, "channels": [s["channel"]], "in_conf": in_conf,
+                               "rank": (0 if in_conf else 1, conf_order.get(ch_conf, 2))}
+        else:
+            digest_map[key]["channels"].append(s["channel"])
+
+    digest = sorted(digest_map.values(), key=lambda x: x["rank"])
+    if digest:
+        L.append("<b>[DIGEST] Top actionable signals</b>")
+        for item in digest[:5]:
+            s    = item["s"]
+            em   = "[+]" if s["direction"] == "BUY" else "[-]"
+            tgt  = "/".join(str(t) for t in s["targets"]) if s.get("targets") else ""
+            chs  = item["channels"]
+            line = f"  {em} <b>{s['instrument']}</b>  @ {s['entry']}  SL {s['sl']}"
+            if tgt: line += f"  TGT {tgt}"
+            if len(chs) > 1:
+                line += f"  — {len(chs)} channels"
+            else:
+                badge = ch_scores.format_score_badge(chs[0], scores)
+                line += f"  — {html.escape(chs[0])}"
+                if badge: line += f"  <i>{badge}</i>"
+            L.append(line)
+        L.append("")
+
+    # Digest instruments — expand these fully; collapse everything else
+    digest_instruments = {item["s"]["instrument"] for item in digest}
+
     # Signals by channel (sorted by confidence: HIGH -> MED -> UNKNOWN -> LOW)
     for channel, sigs in by_channel.items():
         score_badge = ch_scores.format_score_badge(channel, scores)
-        ch_header = f"<b>>> {html.escape(channel)}</b>  ({len(sigs)})"
+        ch_conf     = (scores.get(channel) or {}).get("confidence", "UNKNOWN")
+
+        # Signals in this channel that are in the digest get full treatment
+        digest_sigs = [s for s in sigs if s["instrument"] in digest_instruments]
+        other_sigs  = [s for s in sigs if s["instrument"] not in digest_instruments]
+
+        if not digest_sigs and ch_conf not in ("HIGH", "MED"):
+            # Low-confidence channel with no digest signals — one-liner only
+            instruments = ", ".join(
+                f"{'[+]' if s['direction']=='BUY' else ('[-]' if s['direction']=='SELL' else '[=]')} {s['instrument']}"
+                for s in sigs
+            )
+            badge_str = f"  <i>{score_badge}</i>" if score_badge else ""
+            L.append(f"  <b>{html.escape(channel)}</b>{badge_str}: {instruments}")
+            continue
+
+        ch_header = f"<b>&gt;&gt; {html.escape(channel)}</b>  ({len(sigs)})"
         if score_badge:
             ch_header += f"  <i>{score_badge}</i>"
         L.append(ch_header)
-        for s in sigs:
+
+        for s in digest_sigs + other_sigs:
             ts_ist = (datetime.fromisoformat(s["ts"])
                       .replace(tzinfo=timezone.utc).astimezone(IST))
             em = "[+]" if s["direction"] == "BUY" else ("[-]" if s["direction"] == "SELL" else "[=]")
@@ -240,15 +327,18 @@ def run(dry_run: bool = False, mode: str = "indices") -> None:
             parts.append(f"[{ts_ist.strftime('%H:%M')}]")
             L.append("  " + "  ".join(parts))
 
+            # Only show enrichment for digest signals
+            if s["instrument"] not in digest_instruments:
+                continue
+
             sym = base_symbol(s["instrument"])
 
-            # NSE live check
             if sym in quotes:
-                q   = quotes[sym]
-                pct = q.get("pct") or 0
-                arr = "^" if pct >= 0 else "v"
-                nline = f"  └ NSE Rs.{q['ltp']}  {arr}{abs(pct):.1f}%"
-                if s.get("entry") and q.get("ltp"):
+                q    = quotes[sym]
+                pct  = q.get("pct") or 0
+                arr  = "^" if pct >= 0 else "v"
+                nline = f"  └ NSE {q['ltp']}  {arr}{abs(pct):.1f}%"
+                if s.get("entry") and q.get("ltp") and not is_option(s["instrument"]):
                     diff = (q["ltp"] - s["entry"]) / s["entry"] * 100
                     if abs(diff) > 3:
                         nline += f"  [WARN] entry {s['entry']} ({abs(diff):.0f}% away)"
@@ -265,19 +355,18 @@ def run(dry_run: bool = False, mode: str = "indices") -> None:
                 L.append(f"  └ NIFTY {nifty['last']:,.0f}  ({nifty.get('percentChange',0):+.2f}%)")
             elif sym in ("BANKNIFTY", "BNF") and bnf.get("last"):
                 L.append(f"  └ BANKNIFTY {bnf['last']:,.0f}  ({bnf.get('percentChange',0):+.2f}%)")
+            elif sym == "SENSEX" and sensex and sensex.get("last"):
+                L.append(f"  └ SENSEX {sensex['last']:,.0f}  ({sensex.get('percentChange',0):+.2f}%)")
 
-            # TA state
             if sym in ta_cache:
                 ta_line = ta_mod.format_ta(ta_cache[sym])
                 if ta_line:
-                    L.append(f"  └ TA: {ta_line}")
+                    L.append(f"  └ {ta_line}")
 
-            # Historical hit rate for this instrument + direction
             stat_line = instr_stats.format_stat_line(s["instrument"], s["direction"])
             if stat_line:
                 L.append(f"  └ {stat_line}")
 
-            # Corporate event warning
             if sym in events_map:
                 L.append(events_mod.format_event_flag(sym, events_map[sym]))
 

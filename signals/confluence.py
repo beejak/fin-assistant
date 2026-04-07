@@ -108,10 +108,11 @@ def format_confluence_alert(confluences: list[dict]) -> str | None:
         return None
     lines = ["[!!] <b>CONFLUENCE ALERT</b> -- Multiple channels agree\n"]
     for c in confluences:
-        em = "[+]" if c["direction"] == "BUY" else "[-]"
-        line = f"{em} <b>{c['instrument']}</b>  {c['direction']}  x {c['count']} channels"
-        if c["avg_entry"]: line += f"  avg entry {c['avg_entry']}"
-        if c["avg_sl"]:    line += f"  avg SL {c['avg_sl']}"
+        em     = "[+]" if c["direction"] == "BUY" else "[-]"
+        is_opt = "CE" in c["instrument"] or "PE" in c["instrument"]
+        line   = f"{em} <b>{c['instrument']}</b>  {c['direction']}  x {c['count']} channels"
+        if c["avg_entry"] and is_opt: line += f"  avg entry {c['avg_entry']}"
+        if c["avg_sl"]:               line += f"  avg SL {c['avg_sl']}"
         lines.append(line)
         lines.append(f"   └ {', '.join(c['channels'])}")
     return "\n".join(lines)

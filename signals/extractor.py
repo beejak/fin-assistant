@@ -161,9 +161,15 @@ def _extract_indices(text: str) -> dict | None:
 
     if ce_pe:
         strike, opt = ce_pe.group(1), ce_pe.group(2).upper()
-        index = _find_index(text)
-        if not index:
-            index = "NIFTY"   # bare strike → assume NIFTY
+        strike_int = int(strike)
+        # Strike number is unambiguous — override any text-based guess.
+        # SENSEX ~75k, BANKNIFTY ~52k, NIFTY ~23k (thresholds with room).
+        if strike_int >= 60000:
+            index = "SENSEX"
+        elif strike_int >= 30000:
+            index = "BANKNIFTY"
+        else:
+            index = _find_index(text) or "NIFTY"
         instrument = f"{index} {strike}{opt}"
         if not entry:
             m = re.search(

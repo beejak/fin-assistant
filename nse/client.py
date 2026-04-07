@@ -152,6 +152,22 @@ def all_indices() -> dict:
     return _yf_indices()
 
 
+def sensex() -> dict | None:
+    """Return Sensex snapshot via yfinance (BSE index, not on NSE API)."""
+    try:
+        import yfinance as yf
+        fi   = yf.Ticker("^BSESN").fast_info
+        ltp  = fi.last_price
+        if not ltp:
+            return None
+        prev = fi.previous_close or ltp
+        pct  = round((ltp - prev) / prev * 100, 2) if prev else 0
+        return {"index": "SENSEX", "last": ltp, "percentChange": pct}
+    except Exception as e:
+        log.debug("Sensex yfinance: %s", e)
+        return None
+
+
 def gift_nifty() -> dict | None:
     """Return GIFT NIFTY data (pre-market indicator)."""
     idx = all_indices()
