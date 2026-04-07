@@ -397,14 +397,11 @@ def run(dry_run: bool = False, mode: str = "indices") -> None:
         key=lambda x: x[1]["hit_rate"] or 0, reverse=True
     )
     if channels_ranked:
-        rows_lb = [f"{'Channel':<26} {'Sig':>4}  {'Hit%':>5}  Conf"]
-        rows_lb.append("─" * 44)
-        for ch, sc in channels_ranked[:8]:
-            flag = " ←" if sc.get("suggest_mute") else ""
-            rows_lb.append(
-                f"{ch[:24]:<26} {sc['total']:>4}  {sc['hit_rate']:>4.0f}%  {sc['confidence']}{flag}"
-            )
-        L.append(f"<pre>{chr(10).join(rows_lb)}</pre>")
+        L.append("<b>Channel Leaderboard</b>")
+        for ch, sc in channels_ranked[:6]:
+            flag = "  ← mute?" if sc.get("suggest_mute") else ""
+            bar = "█" * int((sc["hit_rate"] or 0) // 20)   # 0-5 blocks, 20% each
+            L.append(f"  <code>{bar:<5}</code> {html.escape(ch[:28])}  {sc['hit_rate']:.0f}% ({sc['total']} sig){flag}")
 
     # Log & send
     if not dry_run:

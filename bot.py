@@ -15,9 +15,29 @@ def send(text: str, chat_id: int | None = None, dry_run: bool = False) -> None:
         return
     cid = chat_id or OWNER_CHAT_ID
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    for chunk in [text[i:i+4000] for i in range(0, len(text), 4000)]:
+    for chunk in _split_html(text, 4000):
         _send_chunk(url, cid, chunk)
         time.sleep(0.3)
+
+
+def _split_html(text: str, limit: int) -> list[str]:
+    """Split text into chunks ≤ limit chars, breaking only on newlines.
+    This prevents Telegram HTML parse errors from tags being split across chunks.
+    """
+    chunks = []
+    current: list[str] = []
+    current_len = 0
+    for line in text.split("\n"):
+        line_len = len(line) + 1   # +1 for the \n
+        if current_len + line_len > limit and current:
+            chunks.append("\n".join(current))
+            current = []
+            current_len = 0
+        current.append(line)
+        current_len += line_len
+    if current:
+        chunks.append("\n".join(current))
+    return chunks or [""]
 
 
 def _send_chunk(url: str, cid: int, chunk: str) -> None:
