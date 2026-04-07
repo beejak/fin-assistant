@@ -103,6 +103,16 @@ def run(dry_run: bool = False, mode: str = "indices") -> None:
         new_sigs.append(sig)
         by_channel[name].append(sig)
 
+    # Within-scan dedup: same channel calling same instrument+direction multiple
+    # times in one session (e.g. channel spamming identical call 10×) →
+    # keep only the most recent occurrence so the log stays clean.
+    _seen: dict = {}
+    for sig in new_sigs:
+        key = (sig["channel"], sig["instrument"], sig["direction"])
+        if key not in _seen or sig["ts"] > _seen[key]["ts"]:
+            _seen[key] = sig
+    new_sigs = list(_seen.values())
+
     log.info("%d new signals", len(new_sigs))
     if not new_sigs:
         log.info("Nothing new -- skipping send")

@@ -162,6 +162,15 @@ def _extract_indices(text: str) -> dict | None:
     if ce_pe:
         strike, opt = ce_pe.group(1), ce_pe.group(2).upper()
         strike_int = int(strike)
+
+        # If a non-index stock symbol immediately precedes this CE/PE in the
+        # text, it's a stock option — skip it in indices mode.
+        stock_m = STOCK_OPT_RE.search(text)
+        if stock_m:
+            sym_before = stock_m.group(1).upper()
+            if sym_before not in INDICES and sym_before not in _SYM_NOISE:
+                return None   # e.g. "GODREJCP 1040CE" → stock option, not NIFTY
+
         # Strike number is unambiguous — override any text-based guess.
         # SENSEX ~75k, BANKNIFTY ~52k, NIFTY ~23k (thresholds with room).
         if strike_int >= 60000:
@@ -170,6 +179,10 @@ def _extract_indices(text: str) -> dict | None:
             index = "BANKNIFTY"
         else:
             index = _find_index(text) or "NIFTY"
+            # Safety net: genuine NIFTY strikes are always >= 15000.
+            # Anything lower is a mis-attributed stock/commodity option.
+            if strike_int < 15000:
+                return None
         instrument = f"{index} {strike}{opt}"
         if not entry:
             m = re.search(
